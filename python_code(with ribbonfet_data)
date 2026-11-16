@@ -1,0 +1,802 @@
+import os
+import csv
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# ==========================================================================
+# 1. PAPER REFERENCE DATA
+# Agrawal et al., IEDM 2024, Figures 10 and 4(c)
+# Tsi = 5.5 nm, Lg = 6 nm
+# ==========================================================================
+
+FIG10 = {
+    ('N', 5.5, 'lo'): (
+        [-0.25, -0.2, -0.15, -0.1, -0.05, -0.0, 0.05, 0.1, 0.15, 0.2,
+         0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7,
+         0.75, 0.8, 0.85, 0.9, 0.95, 1.0, 1.05, 1.1],
+        [-6.665, -6.279, -5.886, -5.476, -5.045, -4.551, -4.135, -3.744,
+         -3.561, -2.939, -2.52, -2.349, -2.339, -2.085, -1.791, -1.496,
+         -1.251, -1.209, -1.168, -1.109, -1.064, -1.027, -0.995, -0.973,
+         -0.957, -0.947, -0.926, -0.915]
+    ),
+
+    ('N', 5.5, 'hi'): (
+        [-0.25, -0.2, -0.15, -0.1, -0.05, -0.0, 0.05, 0.1, 0.15, 0.2,
+         0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7,
+         0.75, 0.8, 0.85, 0.9, 0.95, 1.0, 1.05, 1.1, 1.15],
+        [-5.045, -4.694, -4.338, -3.987, -3.631, -3.338, -2.87, -2.433,
+         -2.309, -1.982, -1.64, -1.514, -1.506, -1.33, -1.126, -0.923,
+         -0.751, -0.702, -0.652, -0.546, -0.476, -0.437, -0.392, -0.351,
+         -0.319, -0.303, -0.261, -0.239, -0.274]
+    ),
+
+    ('P', 5.5, 'lo'): (
+        [-0.25, -0.2, -0.15, -0.1, -0.05, -0.0, 0.05, 0.1, 0.15, 0.2,
+         0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7,
+         0.75, 0.8, 0.85, 0.9, 0.95, 1.0, 1.05, 1.1, 1.15],
+        [-7.037, -6.52, -6.115, -5.689, -5.251, -4.824, -4.402, -3.981,
+         -3.584, -3.137, -2.824, -2.499, -2.156, -1.982, -1.825, -1.652,
+         -1.53, -1.421, -1.324, -1.329, -1.261, -1.197, -1.165, -1.128,
+         -1.096, -1.072, -1.048, -1.027, -1.005]
+    ),
+
+    ('P', 5.5, 'hi'): (
+        [-0.15, -0.1, -0.05, -0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3,
+         0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8,
+         0.85, 0.9, 0.95, 1.0, 1.05, 1.1, 1.15],
+        [-4.226, -3.838, -3.449, -2.992, -2.672, -2.353, -2.035, -1.76,
+         -1.46, -1.312, -1.149, -1.0, -0.855, -0.758, -0.666, -0.586,
+         -0.537, -0.436, -0.388, -0.353, -0.309, -0.266, -0.227, -0.184,
+         -0.147, -0.122, -0.096]
+    ),
+}
+
+FIG4C_MOBILITY = [
+    (3.800e11, 7.8),
+    (6.600e11, 48.8),
+    (1.540e12, 117),
+    (2.830e12, 170),
+    (4.110e12, 194),
+    (5.510e12, 210),
+    (7.030e12, 214),
+    (8.570e12, 213),
+    (1.017e13, 205),
+    (1.171e13, 200),
+    (1.316e13, 190),
+    (1.475e13, 181),
+    (1.634e13, 170),
+]
+
+# ==========================================================================
+# 2. CONFIGURATION
+# ==========================================================================
+
+# Simulation CSV files at Vd = 0.05 V
+NFET_CSV_LO = "n167_nfet_Vg_Id_N.csv"
+PFET_CSV_LO = "n167_pfet_Vg_Id_N.csv"
+
+# Simulation CSV files at Vd = 0.7 V
+# Replace with your actual filenames
+NFET_CSV_HI = "n172_nfet_Vg_Id_N.csv"
+PFET_CSV_HI = "n172_pfet_Vg_Id_N.csv"
+
+OUTDIR = "results_vd0p05_and_0p7"
+
+VD_LO = 0.05
+VD_HI = 0.70
+
+PAPER_VD_LO = 0.05
+PAPER_VD_HI = 0.65
+PAPER_TSI = 5.5
+
+LG = 6.0
+SHEET_H = 5.5
+SHEET_W = 30.0
+NSHEETS = 1
+
+SHARP = False
+
+TOX = 1.0
+THFO2 = 2.0
+KHFO2 = 22.0
+
+ID_SCALE = 1.0
+VOV_NORM = 0.25
+
+Q = 1.602176634e-19
+EPS0 = 8.8541878128e-14  # F/cm
+
+# ==========================================================================
+# 3. HELPER FUNCTIONS
+# ==========================================================================
+
+def load_device_csv(path, is_pfet=False, id_scale=1.0):
+
+    if not os.path.isfile(path):
+        raise FileNotFoundError(
+            f"Could not find '{path}'. Check the CSV filename in Section 2."
+        )
+
+    df = pd.read_csv(path)
+
+    required = {"Vg", "Id"}
+    missing = required.difference(df.columns)
+
+    if missing:
+        raise ValueError(
+            f"'{path}' must contain columns named Vg and Id. "
+            f"Missing columns: {sorted(missing)}"
+        )
+
+    vg = df["Vg"].to_numpy(dtype=float)
+
+    if is_pfet:
+        vg = -vg
+
+    idd = np.abs(df["Id"].to_numpy(dtype=float)) * id_scale
+
+    valid = np.isfinite(vg) & np.isfinite(idd)
+    vg, idd = vg[valid], idd[valid]
+
+    order = np.argsort(vg, kind="stable")
+    vg, idd = vg[order], idd[order]
+
+    # Keep the last occurrence if the CSV contains duplicate gate voltages.
+    _, reverse_indices = np.unique(vg[::-1], return_index=True)
+
+    keep = np.sort(len(vg) - 1 - reverse_indices)
+
+    vg, idd = vg[keep], idd[keep]
+
+    if len(vg) < 3:
+        raise ValueError(
+            f"'{path}' has fewer than three valid unique Vg points."
+        )
+
+    return vg, idd
+
+
+def vt_linear(vg, idd):
+    """Threshold voltage from linear extrapolation at maximum gm."""
+
+    vf = np.linspace(vg.min(), vg.max(), 600)
+
+    current = np.interp(vf, vg, idd)
+
+    gm = np.gradient(current, vf)
+
+    k = int(np.argmax(gm))
+
+    if not np.isfinite(gm[k]) or gm[k] <= 0:
+        return np.nan, gm[k]
+
+    return vf[k] - current[k] / gm[k], gm[k]
+
+
+def vg_at_level(vg, idd, level):
+
+    valid = (idd > 0) & np.isfinite(idd)
+
+    x = vg[valid]
+    log_id = np.log10(idd[valid])
+
+    target = np.log10(level)
+
+    if len(log_id) < 2 or not (
+        log_id.min() <= target <= log_id.max()
+    ):
+        return np.nan
+
+    for j in range(len(log_id) - 1):
+
+        if (
+            (log_id[j] - target)
+            * (log_id[j + 1] - target) <= 0
+        ):
+
+            if log_id[j] == log_id[j + 1]:
+                continue
+
+            return x[j] + (
+                (target - log_id[j]) * (x[j + 1] - x[j])
+                / (log_id[j + 1] - log_id[j])
+            )
+
+    return np.nan
+
+
+def ss_avg(vg, idd, lev_lo, lev_hi):
+
+    vg_lo = vg_at_level(vg, idd, lev_lo)
+    vg_hi = vg_at_level(vg, idd, lev_hi)
+
+    return 1000.0 * (vg_hi - vg_lo) / (
+        np.log10(lev_hi) - np.log10(lev_lo)
+    )
+
+
+def ss_min(vg, idd, lev_lo, lev_hi):
+
+    mask = (
+        (idd >= lev_lo)
+        & (idd <= lev_hi)
+        & (idd > 0)
+    )
+
+    if mask.sum() < 3:
+        return np.nan
+
+    slope = np.gradient(
+        np.log10(idd[mask]),
+        vg[mask]
+    )
+
+    positive_slope = slope[slope > 0]
+
+    if len(positive_slope) == 0:
+        return np.nan
+
+    return 1000.0 / np.max(positive_slope)
+
+
+def id_at(vg, idd, v):
+
+    return float(
+        np.exp(
+            np.interp(
+                v,
+                vg,
+                np.log(np.maximum(idd, 1e-30))
+            )
+        )
+    )
+
+
+def mobility(vg, idd, vd, lg_cm, weff_cm, cox, vt,
+             vov_fit=(0.05, 0.30)):
+
+    gm = np.gradient(idd, vg)
+
+    mu_fe = gm * lg_cm / (weff_cm * cox * vd)
+
+    ns = cox * (vg - vt) / Q
+
+    valid = (
+        (vg > vt + 0.02)
+        & (gm > 0)
+        & np.isfinite(mu_fe)
+    )
+
+    if valid.sum() == 0:
+        return None
+
+    peak_index = np.argmax(
+        np.where(valid, mu_fe, -np.inf)
+    )
+
+    fit_mask = (
+        (vg >= vt + vov_fit[0])
+        & (vg <= vt + vov_fit[1])
+        & (gm > 0)
+    )
+
+    mu0 = np.nan
+
+    if fit_mask.sum() >= 4:
+
+        y = idd[fit_mask] / np.sqrt(gm[fit_mask])
+
+        slope = np.polyfit(
+            vg[fit_mask],
+            y,
+            1
+        )[0]
+
+        mu0 = (
+            slope**2 * lg_cm
+            / (cox * weff_cm * vd)
+        )
+
+    return {
+        "vg": vg,
+        "mu_fe": mu_fe,
+        "ns": ns,
+        "mask": valid,
+        "mu_peak": mu_fe[peak_index],
+        "ns_peak": ns[peak_index],
+        "vg_peak": vg[peak_index],
+        "mu0": mu0,
+    }
+
+
+def prepare_simulation_curve(path, dev):
+
+    vg, idd = load_device_csv(
+        path,
+        is_pfet=(dev == "p"),
+        id_scale=ID_SCALE
+    )
+
+    vt, gm_max = vt_linear(vg, idd)
+
+    if not np.isfinite(vt):
+        raise ValueError(
+            f"Could not extract a valid Vt from '{path}'."
+        )
+
+    norm = id_at(
+        vg,
+        idd,
+        vt + VOV_NORM
+    )
+
+    return {
+        "vg": vg,
+        "id": idd,
+        "vt": vt,
+        "gm_max": gm_max,
+        "norm": norm,
+    }
+
+
+def prepare_paper_curve(dev, vd_tag):
+    """Get the Tsi=5.5 nm Figure 10 curve and normalise arbitrary Id."""
+
+    key = (dev.upper(), PAPER_TSI, vd_tag)
+
+    if key not in FIG10:
+        raise KeyError(
+            f"Paper Figure 10 data does not contain key {key}."
+        )
+
+    vg, log_id = FIG10[key]
+
+    vg = np.asarray(vg, dtype=float)
+
+    idd = 10.0 ** np.asarray(log_id, dtype=float)
+
+    order = np.argsort(vg, kind="stable")
+
+    vg, idd = vg[order], idd[order]
+
+    vt, _ = vt_linear(vg, idd)
+
+    if not np.isfinite(vt):
+        raise ValueError(
+            f"Could not extract paper Vt for {key}."
+        )
+
+    norm = id_at(
+        vg,
+        idd,
+        vt + VOV_NORM
+    )
+
+    return {
+        "vg": vg,
+        "id": idd,
+        "vt": vt,
+        "norm": norm
+    }
+
+
+# ==========================================================================
+# 4. LOAD SIMULATION DATA AT BOTH DRAIN BIASES
+# ==========================================================================
+
+os.makedirs(OUTDIR, exist_ok=True)
+
+curves = {
+
+    "n": {
+        "low": prepare_simulation_curve(NFET_CSV_LO, "n"),
+        "high": prepare_simulation_curve(NFET_CSV_HI, "n"),
+    },
+
+    "p": {
+        "low": prepare_simulation_curve(PFET_CSV_LO, "p"),
+        "high": prepare_simulation_curve(PFET_CSV_HI, "p"),
+    },
+}
+
+
+# ==========================================================================
+# 5. DEVICE METRICS AND MOBILITY: Vd = 0.05 V ONLY
+# ==========================================================================
+
+perimeter_nm = (
+    2 * (SHEET_W + SHEET_H)
+    if SHARP
+    else 2 * (SHEET_W - SHEET_H) + np.pi * SHEET_H
+)
+
+weff_nm = NSHEETS * perimeter_nm
+
+weff_cm = weff_nm * 1e-7
+
+lg_cm = LG * 1e-7
+
+cet_nm = TOX + THFO2 * 3.9 / KHFO2
+
+cox = 3.9 * EPS0 / (cet_nm * 1e-7)
+
+
+print(
+    f"Geometry: H={SHEET_H} nm, W={SHEET_W} nm, "
+    f"Nsheets={NSHEETS}, Weff={weff_nm:.2f} nm, "
+    f"Lg={LG} nm, CET={cet_nm:.2f} nm"
+)
+
+
+low_vd_rows = []
+
+for dev in ("n", "p"):
+
+    s = curves[dev]["low"]
+
+    vg, idd = s["vg"], s["id"]
+
+    vt = s["vt"]
+    gm_max = s["gm_max"]
+    norm = s["norm"]
+
+    ion = id_at(vg, idd, vg.max())
+
+    ioff = (
+        id_at(vg, idd, 0.0)
+        if vg.min() <= 0.0
+        else idd[0]
+    )
+
+    ss_low = ss_min(
+        vg,
+        idd,
+        1e-4 * norm,
+        1e-2 * norm
+    )
+
+    ss_avg_low = ss_avg(
+        vg,
+        idd,
+        1e-4 * norm,
+        1e-2 * norm
+    )
+
+    # Mobility is calculated ONLY using Vd = 0.05 V data.
+
+    mob = mobility(
+        vg,
+        idd,
+        VD_LO,
+        lg_cm,
+        weff_cm,
+        cox,
+        vt
+    )
+
+    s["mob"] = mob
+
+    row = {
+        "device": dev.upper() + "FET",
+        "Vt_lin_V": vt,
+        "Ion_A_at_max_abs_Vg": ion,
+        "Ion_uA_per_um_Weff":
+            ion / (weff_nm * 1e-3) * 1e6,
+        "Ioff_A_at_Vg0": ioff,
+        "Ion_over_Ioff":
+            ion / ioff if ioff > 0 else np.inf,
+        "SSmin_mV_dec": ss_low,
+        "SSavg_mV_dec": ss_avg_low,
+        "gm_max_uS_per_um":
+            gm_max / (weff_nm * 1e-3) * 1e6,
+    }
+
+    if mob is not None:
+
+        row.update({
+            "mu_FE_peak_cm2_Vs": mob["mu_peak"],
+            "Ns_at_mu_peak_cm-2": mob["ns_peak"],
+            "mu0_Y_function_cm2_Vs": mob["mu0"],
+        })
+
+    low_vd_rows.append(row)
+
+
+metrics_path = os.path.join(
+    OUTDIR,
+    "metrics_simulation_vd0p05.csv"
+)
+
+with open(metrics_path, "w", newline="") as f:
+
+    writer = csv.DictWriter(
+        f,
+        fieldnames=list(low_vd_rows[0].keys())
+    )
+
+    writer.writeheader()
+    writer.writerows(low_vd_rows)
+
+
+print(f"\n=== Simulation metrics at Vd={VD_LO} V ===")
+
+for row in low_vd_rows:
+
+    print(f"\n{row['device']}")
+
+    for key, value in row.items():
+
+        if key != "device":
+            print(f"  {key:30s} {value:.4g}")
+
+
+# ==========================================================================
+# 6. LOAD PAPER FIGURE 10 REFERENCE CURVES (Tsi = 5.5 nm)
+# ==========================================================================
+
+paper = {
+
+    "n": {
+        "low": prepare_paper_curve("N", "lo"),
+        "high": prepare_paper_curve("N", "hi"),
+    },
+
+    "p": {
+        "low": prepare_paper_curve("P", "lo"),
+        "high": prepare_paper_curve("P", "hi"),
+    },
+}
+
+
+# ==========================================================================
+# 7. Id-Vg PLOTS: SIMULATION 0.05/0.70 V + PAPER 0.05/0.65 V
+# ==========================================================================
+
+simulation_styles = {
+
+    "low": {
+        "color": "tab:blue",
+        "linestyle": "--",
+        "linewidth": 2.2,
+        "label": f"Simulation, Vd={VD_LO:g} V",
+    },
+
+    "high": {
+        "color": "tab:orange",
+        "linestyle": "-",
+        "linewidth": 2.2,
+        "label": f"Simulation, Vd={VD_HI:g} V",
+    },
+}
+
+
+paper_styles = {
+
+    "low": {
+        "color": "black",
+        "linestyle": ":",
+        "linewidth": 1.7,
+        "label": (
+            f"Paper, Vd={PAPER_VD_LO:g} V, "
+            f"Tsi={PAPER_TSI:g} nm"
+        ),
+    },
+
+    "high": {
+        "color": "dimgray",
+        "linestyle": "-.",
+        "linewidth": 1.7,
+        "label": (
+            f"Paper, Vd={PAPER_VD_HI:g} V, "
+            f"Tsi={PAPER_TSI:g} nm"
+        ),
+    },
+}
+
+
+for aligned in (False, True):
+
+    fig, axs = plt.subplots(
+        1, 2,
+        figsize=(12.5, 4.8),
+        sharey=True
+    )
+
+    for ax, dev in zip(axs, ("n", "p")):
+
+        # Simulation curves: Vd = 0.05 V and 0.70 V.
+
+        for bias_key in ("low", "high"):
+
+            s = curves[dev][bias_key]
+
+            x = (
+                s["vg"] - s["vt"]
+                if aligned
+                else s["vg"]
+            )
+
+            ax.plot(
+                x,
+                s["id"] / s["norm"],
+                **simulation_styles[bias_key]
+            )
+
+        # Paper curves: Vd = 0.05 V and 0.65 V.
+
+        for bias_key in ("low", "high"):
+
+            ps = paper[dev][bias_key]
+
+            x_paper = (
+                ps["vg"] - ps["vt"]
+                if aligned
+                else ps["vg"]
+            )
+
+            ax.plot(
+                x_paper,
+                ps["id"] / ps["norm"],
+                **paper_styles[bias_key]
+            )
+
+        ax.set_yscale("log")
+
+        ax.set_ylim(1e-7, 1e2)
+
+        ax.set_xlabel(
+            "|Vg| - Vt,lin (V)"
+            if aligned
+            else "|Vg| (V)"
+        )
+
+        ax.set_title(
+            "nFET" if dev == "n" else "pFET"
+        )
+
+        ax.grid(alpha=0.3, which="both")
+
+    axs[0].set_ylabel(
+        f"Normalised Id / Id(Vt + {VOV_NORM:g} V), "
+        "separately per curve"
+    )
+
+    axs[0].legend(
+        fontsize=7.5,
+        loc="lower right"
+    )
+
+    fig.suptitle(
+        f"Linear Id-Vg: Simulation "
+        f"(Vd={VD_LO:g}, {VD_HI:g} V) "
+        f"vs Paper "
+        f"(Vd={PAPER_VD_LO:g}, {PAPER_VD_HI:g} V; "
+        f"Tsi={PAPER_TSI:g} nm)"
+        + (
+            " — Vt aligned"
+            if aligned
+            else " — raw |Vg|"
+        ),
+        fontsize=10
+    )
+
+    fig.tight_layout()
+
+    filename = (
+        "idvg_both_bias_vt_aligned.png"
+        if aligned
+        else "idvg_both_bias_raw.png"
+    )
+
+    fig.savefig(
+        os.path.join(OUTDIR, filename),
+        dpi=170
+    )
+
+    plt.show()
+
+
+# ==========================================================================
+# 8. MOBILITY PLOT: Vd = 0.05 V ONLY
+# ==========================================================================
+
+fig, ax = plt.subplots(figsize=(6.4, 4.7))
+
+ns_p, mu_p = zip(*FIG4C_MOBILITY)
+
+ax.plot(
+    ns_p,
+    mu_p,
+    "s-",
+    color="tab:red",
+    mfc="none",
+    label="Paper Fig. 4c (nFET, Tsi=6 nm)",
+)
+
+
+for dev, color in (
+    ("n", "tab:blue"),
+    ("p", "tab:orange")
+):
+
+    mob = curves[dev]["low"]["mob"]
+
+    if mob is None:
+        continue
+
+    mask = mob["mask"]
+
+    ax.plot(
+        mob["ns"][mask],
+        mob["mu_fe"][mask],
+        "-",
+        color=color,
+        linewidth=2,
+        label=(
+            f"This work {dev}FET: "
+            f"mu_FE (peak {mob['mu_peak']:.0f})"
+        ),
+    )
+
+    if np.isfinite(mob["mu0"]):
+
+        ax.axhline(
+            mob["mu0"],
+            color=color,
+            linestyle=":",
+            linewidth=1.2,
+            label=(
+                f"{dev}FET Y-function "
+                f"mu0={mob['mu0']:.0f}"
+            ),
+        )
+
+
+ax.set_xlim(0, 2e13)
+
+ax.set_ylim(0, 300)
+
+ax.set_xlabel(
+    "Ns (cm$^{-2}$) [approx. Cox(Vg - Vt)/q]"
+)
+
+ax.set_ylabel(
+    "Mobility (cm$^2$/Vs)"
+)
+
+ax.grid(alpha=0.3)
+
+ax.legend(fontsize=8)
+
+ax.set_title(
+    f"Mobility from Linear Id-Vg "
+    f"(Vd={VD_LO:g} V, "
+    f"H={SHEET_H:g} nm, "
+    f"Lg={LG:g} nm)",
+    fontsize=10
+)
+
+fig.tight_layout()
+
+fig.savefig(
+    os.path.join(
+        OUTDIR,
+        "mobility_vs_Ns_vd0p05.png"
+    ),
+    dpi=170
+)
+
+plt.show()
+
+
+print(f"\nAll plots and metrics saved in: {OUTDIR}")
+
+print(
+    "Id-Vg comparison includes paper Vd=0.05 V "
+    "and 0.65 V references."
+)
+
+print(
+    "Mobility is calculated from simulation Vd=0.05 V data only."
+)
