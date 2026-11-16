@@ -1,0 +1,269 @@
+
+set Vd      @VDRAIN@
+set Vdd     @VGATE@
+set H_um    @H@
+set W_um    @W@
+set L_um    @L@
+
+set Vsupply 0.65
+
+set commonGate 1
+
+set nStack  1
+
+set NsMinPeak 3.0e11
+
+set nCountDS ""
+set pCountDS ""
+
+set q  1.602176634e-19
+set pi 3.141592653589793
+set prefix "n@node@"
+
+if {$commonGate == 1} {
+    set gN gate
+    set gP gate
+} else {
+    set gN gate_n
+    set gP gate_p
+}
+
+# ---------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------
+proc PltDatasetNames {fname} {
+    set names {}
+    if {[catch {
+        set fh [open $fname r]
+        set txt [read $fh]
+        close $fh
+    }]} {
+        return $names
+    }
+    if {[regexp {datasets\s*=\s*\[((?:\s*"[^"]*")*)\s*\]} $txt -> dsraw]} {
+        foreach {full grp} [regexp -all -inline {"([^"]*)"} $dsraw] {
+            lappend names $grp
+        }
+    }
+    return $names
+}
+
+proc PickDS {names override pattern} {
+    if {$override ne ""} { return $override }
+    foreach nm $names {
+        if {[regexp $pattern $nm]} { return $nm }
+    }
+    return ""
+}
+
+proc Rev {l} {
+    set r {}
+    for {set k [expr {[llength $l]-1}]} {$k >= 0} {incr k -1} {
+        lappend r [lindex $l $k]
+    }
+    return $r
+}
+
+proc UpSweep {curve} {
+    set vals [cv_getVals $curve]
+    set x [lindex $vals 0]
+    set y [lindex $vals 1]
+    if {[llength $x] == 0 || [llength $y] == 0} { return [list {} {}] }
+    set imin 0
+    set vmin [lindex $x 0]
+    for {set k 0} {$k < [llength $x]} {incr k} {
+        if {[lindex $x $k] <= $vmin} {
+            set vmin [lindex $x $k]
+            set imin $k
+        }
+    }
+    return [list [lrange $x $imin end] [lrange $y $imin end]]
+}
+
+proc IminIdx {ys} {
+    set kmin 0
+    set imin 1e99
+    for {set k 0} {$k < [llength $ys]} {incr k} {
+        set a [expr {abs([lindex $ys $k])}]
+        if {$a > 0 && $a < $imin} { set imin $a; set kmin $k }
+    }
+    return $kmin
+}
+
+proc IatV {xs ys vg0} {
+    if {[llength $xs] == 0 || [llength $ys] == 0} { return 0.0 }
+    set best 0
+    set dmin 1e99
+    for {set k 0} {$k < [llength $xs]} {incr k} {
+        set d [expr {abs([lindex $xs $k] - $vg0)}]
+        if {$d < $dmin} { set dmin $d; set best $k }
+    }
+    return [expr {abs([lindex $ys $best])}]
+}
+
+proc VtCC {xs ys Icc} {
+    for {set k 1} {$k < [llength $xs]} {incr k} {
+        set i0 [expr {abs([lindex $ys [expr {$k-1}]])}]
+        set i1 [expr {abs([lindex $ys $k])}]
+        if {$i0 > 0 && $i1 > 0 && ($i0-$Icc)*($i1-$Icc) <= 0} {
+            set v0 [lindex $xs [expr {$k-1}]]
+            set v1 [lindex $xs $k]
+            if {$i1 == $i0} { return $v0 }
+            set f [expr {(log10($Icc)-log10($i0))/(log10($i1)-log10($i0))}]
+            return [expr {$v0 + $f*($v1-$v0)}]
+        }
+    }
+    return -999
+}
+
+proc SSwin {xs ys Ilo Ihi} {
+    set vlo [VtCC $xs $ys $Ilo]
+    set vhi [VtCC $xs $ys $Ihi]
+    if {$vlo == -999 || $vhi == -999} { return -999 }
+    return [expr {1000.0*abs($vhi-$vlo)/log10($Ihi/$Ilo)}]
+}
+
+# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+set pltFile "@plot@"
+set dsNames [PltDatasetNames $pltFile]
+puts "Datasets in the .plt:"
+foreach nm $dsNames { puts "   $nm" }
+
+set nCnt [PickDS $dsNames $nCountDS {(?i)edensity}]
+set pCnt [PickDS $dsNames $pCountDS {(?i)hdensity}]
+puts "nFET count column : \"$nCnt\""
+puts "pFET count column : \"$pCnt\""
+
+proj_load @plot@ PLT
+cv_createDS Idn "PLT $gN OuterVoltage" "PLT drain_n TotalCurrent"
+cv_createDS Idp "PLT $gP OuterVoltage" "PLT drain_p TotalCurrent"
+cv_display Idn
+cv_display Idp
+if {$nCnt ne ""} { cv_createDS Nn "PLT $gN OuterVoltage" "PLT $nCnt" }
+if {$pCnt ne ""} { cv_createDS Np "PLT $gP OuterVoltage" "PLT $pCnt" }
+
+set Lcm [expr {$L_um * 1.0e-4}]
+set Pcm [expr {$nStack * (2.0*($W_um-$H_um) + $pi*$H_um) * 1.0e-4}]
+puts "Lg = [expr {$L_um*1000}] nm, Pgate = [expr {$Pcm*1.0e7}] nm, Vds = $Vd V"
+
+set Icc [expr {1.0e-7 * $Pcm / $Lcm}]
+puts "Icc = $Icc A"
+
+# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+proc Mobility {tag idCurve nCurve vds Lcm Pcm sgn prefix nsMin} {
+    set q 1.602176634e-19
+    set a [UpSweep $idCurve]
+    set b [UpSweep $nCurve]
+    set xs [lindex $a 0]
+    set id [lindex $a 1]
+    set cn [lindex $b 1]
+    set n  [llength $xs]
+    if {$n == 0 || [llength $cn] != $n} {
+        puts "WARNING ($tag): up-sweep empty or current/count length mismatch ($n vs [llength $cn])."
+        return
+    }
+    set nref [lindex $cn 0]
+    foreach c $cn { if {$c < $nref} { set nref $c } }
+
+    set f1 [open "${prefix}_${tag}_Vg_Id_N.csv" w]
+    puts $f1 "Vg,Id,N"
+    set f2 [open "${prefix}_${tag}_mobility.csv" w]
+    puts $f2 "Vg,Id,N,Ns_cm-2,mu_cm2_Vs"
+
+    set npts 0
+    set mumax 0.0
+    set nsAtMax 0.0
+    for {set k 0} {$k < $n} {incr k} {
+        set vg [lindex $xs $k]
+        set i  [lindex $id $k]
+        set c  [lindex $cn $k]
+        puts $f1 "$vg,$i,$c"
+        if {$sgn * $vg < 0} { continue }
+        set ninv [expr {$c - $nref}]
+        if {$ninv > 0 && abs($i) > 0} {
+            set ns [expr {$ninv / ($Lcm * $Pcm)}]
+            set mu [expr {abs($i) * $Lcm * $Lcm / ($q * $ninv * abs($vds))}]
+            puts $f2 "$vg,$i,$c,$ns,$mu"
+            incr npts
+            if {$mu > $mumax && $ns >= $nsMin} { set mumax $mu; set nsAtMax $ns }
+        }
+    }
+    close $f1
+    close $f2
+    ft_scalar mu_peak_${tag}_cm2Vs $mumax
+    ft_scalar Ns_at_mu_peak_${tag}_cm2 $nsAtMax
+    puts "$tag: N_ref = $nref, $npts points, peak mu = $mumax cm2/Vs at Ns = $nsAtMax cm^-2"
+    if {$mumax == 0.0} { puts "$tag: no point with Ns >= $nsMin. Lower NsMinPeak or raise VGATE." }
+}
+
+if {$nCnt ne ""} {
+    Mobility nfet Idn Nn $Vd $Lcm $Pcm 1 $prefix $NsMinPeak
+} else {
+    puts "nFET mobility skipped: no eDensity count column. Set nCountDS."
+}
+if {$pCnt ne ""} {
+    Mobility pfet Idp Np $Vd $Lcm $Pcm -1 $prefix $NsMinPeak
+} else {
+    puts "pFET mobility skipped: no hDensity count column. Set pCountDS."
+}
+
+# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+set up [UpSweep Idn]
+set xa [lindex $up 0]
+set ya [lindex $up 1]
+set kmin [IminIdx $ya]
+set xs [lrange $xa $kmin end]
+set ys [lrange $ya $kmin end]
+
+set Vtn   [VtCC $xs $ys $Icc]
+set SSn   [SSwin $xs $ys [expr {$Icc/10.0}] $Icc]
+set Ionn  [IatV $xa $ya $Vsupply]
+set Ioffn [IatV $xa $ya 0.0]
+if {$Ioffn <= 0} { set Ioffn 1e-30 }
+
+ft_scalar Vtn_V $Vtn
+ft_scalar SSn_mVdec $SSn
+ft_scalar Ion_n_A $Ionn
+ft_scalar Ioff_n_A $Ioffn
+ft_scalar OnOff_n [expr {$Ionn/$Ioffn}]
+
+# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+set up [UpSweep Idp]
+set xa [lindex $up 0]
+set ya [lindex $up 1]
+set kmin [IminIdx $ya]
+set xr [Rev [lrange $xa 0 $kmin]]
+set yr [Rev [lrange $ya 0 $kmin]]
+
+set Vtp   [VtCC $xr $yr $Icc]
+set SSp   [SSwin $xr $yr [expr {$Icc/10.0}] $Icc]
+set Ionp  [IatV $xa $ya [expr {-$Vsupply}]]
+set Ioffp [IatV $xa $ya 0.0]
+if {$Ioffp <= 0} { set Ioffp 1e-30 }
+
+ft_scalar Vtp_V $Vtp
+ft_scalar SSp_mVdec $SSp
+ft_scalar Ion_p_A $Ionp
+ft_scalar Ioff_p_A $Ioffp
+ft_scalar OnOff_p [expr {$Ionp/$Ioffp}]
+
+puts "nFET: Vt=$Vtn V, SS=$SSn mV/dec, Ion=$Ionn A, Ioff=$Ioffn A"
+puts "pFET: Vt=$Vtp V, SS=$SSp mV/dec, Ion=$Ionp A, Ioff=$Ioffp A"
+if {$Vtn == -999 || $Vtp == -999} {
+    puts "WARNING: Vt criterion not crossed (-999). Check Icc = $Icc A against the printed curve."
+}
+
+# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+if {abs($Vd-0.05) < 1e-6} {
+    ft_scalar Vtn_Vd005 $Vtn
+    ft_scalar Vtp_Vd005 $Vtp
+}
+if {abs($Vd-0.65) < 1e-6} {
+    ft_scalar Vtn_Vd065 $Vtn
+    ft_scalar Vtp_Vd065 $Vtp
+}

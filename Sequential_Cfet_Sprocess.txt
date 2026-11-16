@@ -1,0 +1,809 @@
+
+
+#########################################################
+#########################################################
+
+AdvancedCalibration
+
+
+#########################################################
+#########################################################
+
+set contactMode @contactMode@
+
+# 0 : separate gate_n / gate_p contacts (sequential integration)
+# 1 : one common "gate" contact
+set commonGate  @commonGate@
+
+# 1 : gate wraps under the lowest top sheet (Tsige gap above the bond oxide)S
+# 0 : lowest top sheet sits directly on the bond oxide
+set topWrap     1
+
+set coarse      0
+
+# Top channel orientation. RECORD ONLY (Sprocess has one wafer.orient).
+set topOrient   110
+
+mater add name=LowK  new.like=Oxide
+
+mater add name=SiChN new.like=Silicon alt.matername=Silicon
+mater add name=SiChP new.like=Silicon alt.matername=Silicon
+mater add name=SiSDN new.like=Silicon alt.matername=Silicon
+mater add name=SiSDP new.like=Silicon alt.matername=Silicon
+
+set ChMatN SiChN
+set ChMatP SiChP
+set SdMatN SiSDN
+set SdMatP SiSDP
+
+
+#########################################################
+#########################################################
+
+set Nch      1.0e15
+set Nsd      5.0e20
+
+# Bottom nFET
+set DchN     "Boron"
+set DsdN     "Phosphorus"
+
+# Top pFET
+set DchP     "Phosphorus"
+set DsdP     "Boron"
+
+# Activation anneal [C] and duration [s]
+set Tact     1000
+set tAct     1.0e-6
+
+# --- Optional thermal budget of the top-FET process, seen by the bottom nFET
+set doThermal 0
+set T_EPI     650
+set t_EPI     600
+set T_RELI    900
+set t_RELI    30
+
+# --- S/D erfc profile ---
+# Ldiff : erfc length scale
+# xj    : erfc(xj) = Nch/Nsd = 1e15/5e20 = 2e-6  ->  xj ~ 3.35
+#         recompute if Nch or Nsd is changed
+# Lov   : the metallurgical junction is placed Lov INSIDE the gate edge
+set Ldiff 2.0e-3
+set xj    3.35
+set Lov   1.0e-3
+
+
+#########################################################
+#########################################################
+
+source user_proc.fps
+
+proc WriteBND {} {
+    global count
+
+    if { $count < 10 } {
+        struct tdr.bnd=n@node@_0${count}
+    } else {
+        struct tdr.bnd=n@node@_${count}
+    }
+
+    puts "STAGE: WriteBND #$count done"
+    set count [expr $count+1]
+}
+
+set count 1
+
+# Thermal step: always logged; runs diffuse only if run=1.
+# eq1000C = equivalent time at 1000 C with a generic Ea=3.5 eV
+# (a bookkeeping number, not a physical model).
+set TB_LOG [open "n@node@_thermal_budget.log" w]
+set TB_EQ  0.0
+proc THERMAL {label T t run} {
+    global TB_LOG TB_EQ
+    set k 8.617e-5
+    set eq [expr {$t*exp(-3.5/$k*(1.0/($T+273.15)-1.0/1273.15))}]
+    set TB_EQ [expr {$TB_EQ+$eq}]
+    puts $TB_LOG [format "%-30s T=%6.1f C  t=%g s  eq1000C=%.3e s  cum=%.3e s  run=%d" $label $T $t $eq $TB_EQ $run]
+    if { $run } {
+        diffuse time=${t}<s> temp=$T !stress.relax
+    }
+}
+
+puts $TB_LOG "Top channel orientation (record only): Si($topOrient)"
+
+# Mesh-line helper for x: skips a line if one already exists within ltol
+set ltol 0.1e-3
+set lnlist(x) {}
+proc LN {dir loc sp {tag ""}} {
+    global lnlist ltol
+    foreach xx $lnlist($dir) {
+        if { abs($loc - $xx) < $ltol } {
+            puts "LN: skipping $dir line at $loc (already have one at $xx)"
+            return
+        }
+    }
+    lappend lnlist($dir) $loc
+    if { $tag eq "" } {
+        line $dir loc=$loc spacing=$sp
+    } else {
+        line $dir loc=$loc spacing=$sp tag=$tag
+    }
+}
+
+
+#########################################################
+#########################################################
+
+set debug           1
+
+source PH_LIB.fps
+
+sde off
+
+
+#########################################################
+#########################################################
+
+# NOTE: 0.2 nm in x/y/z everywhere gives a very large 3D node count.
+set dx      0.3e-3
+set dz      @zSpacing@
+
+set ChRegionName  @preNLregionName@
+
+if { $coarse } {
+    set dx 0.4e-3
+    set dz [expr 2.0*$dz]
+}
+
+
+#########################################################
+#########################################################
+
+set nStackB     1
+set nStackT     1
+if { $coarse } { set nStackB 1; set nStackT 1 }
+
+set W        @W@
+set H        @H@
+set tox      @tox@
+set thfo2    @thfo2@
+set Lg       @L@
+
+# Top sheet thickness = H + dHtop (layer-transfer thickness variation)
+set dHtop    0.0
+set Htop     [expr ($H + $dHtop)]
+
+# Bond oxide between the bottom device and the top device (paper: sub-30 nm)
+set Tbond    25.0e-3
+
+# Bottom gate metal that remains above the dielectric on the top bottom-sheet
+set Tgcap    3.0e-3
+
+set Ppitch   48.0e-3
+set FPpitch  40.0e-3
+
+set Tsige    10.0e-3
+set Tepi     5.0e-3
+set Tild     15.0e-3
+
+set LspLK    5.0e-3
+set Lcont    16.0e-3
+
+set Lgins    [expr {round(($tox+$thfo2)/$dz)*$dz}]
+puts "Lgins = $Lgins (tox+thfo2=[expr $tox+$thfo2], dz = $dz)"
+
+
+#########################################################
+#########################################################
+
+if { $Lgins <= 0 } {
+    puts "Lgins is 0: dz=$dz is too coarse compared with tox+thfo2=[expr $tox+$thfo2]"
+    exit
+}
+
+if { $LspLK < $Lgins } {
+    puts "Check the low-k spacer length LspLK=$LspLK and Lgins=$Lgins ..."
+    exit
+}
+
+if { $Ppitch < ($Lg + 2*$Lcont) } {
+    puts "Poly pitch should be larger than Lg + 2*Lcont"
+    exit
+}
+
+if { $FPpitch < ($W + 2*($tox+$thfo2)) } {
+    puts "Foot print pitch should be larger than W + 2*(tox+thfo2)"
+    exit
+}
+
+if { $Tsige < (2*($tox+$thfo2)) } {
+    puts "Distance between nano-slabs should be larger than 2*(tox+thfo2)"
+    exit
+}
+
+if { $W < $H || $W < $Htop } {
+    puts "Nano-slab width should be larger than the thickness."
+    exit
+}
+
+if { $Tgcap < 1.0e-3 } {
+    puts "Tgcap must be at least ~1 nm of gate metal above the bottom stack"
+    exit
+}
+
+if { $Tbond <= 0 } {
+    puts "Tbond must be > 0"
+    exit
+}
+
+if { $Tbond >= 30.0e-3 } {
+    puts "WARNING: Tbond=$Tbond um is not sub-30 nm (paper target)"
+}
+
+if { $Lov < 0 || ($Lg - 2*$Lov) <= 0 } {
+    puts "Lov=$Lov is invalid for Lg=$Lg (need 0 <= Lov < Lg/2)"
+    exit
+}
+
+if { ($tox+$thfo2) >= $Tepi } {
+    puts "tox+thfo2 must be smaller than Tepi (x lines would interleave)"
+    exit
+}
+
+
+#########################################################
+#########################################################
+
+set AX0     [expr (-0.5*$H)]
+set AX1     [expr ( 0.5*$H)]
+
+set AY0     [expr (-0.5*$W)]
+set AY1     [expr ( 0.5*$W)]
+
+
+#########################################################
+#########################################################
+
+set P0      [expr (-0.5*$Lg)]
+set P1      [expr ( 0.5*$Lg)]
+
+set Pins0   [expr ($P0-$Lgins)]
+set Pins1   [expr ($P1+$Lgins)]
+
+set Zsp0    [expr ($P0-$LspLK)]
+set Zsp1    [expr ($P1+$LspLK)]
+
+set Zcont0  [expr ($P0-$Lcont)]
+set Zcont1  [expr ($P1+$Lcont)]
+
+set Z0      [expr (-0.5*$Ppitch)]
+set Z1      [expr ( 0.5*$Ppitch)]
+
+
+#########################################################
+#########################################################
+
+set Yox0    [expr ($AY0-$tox)]
+set Yox1    [expr ($AY1+$tox)]
+
+set Yhf0    [expr ($AY0-$tox-$thfo2)]
+set Yhf1    [expr ($AY1+$tox+$thfo2)]
+
+
+#########################################################
+#########################################################
+
+set Y0      [expr (-0.5*$FPpitch)]
+set Y1      [expr ( 0.5*$FPpitch)]
+
+
+#########################################################
+#########################################################
+
+# Overshoot of epi / gate above the top face of the upper sheet (same for
+# both devices): gate dielectric ring + gate-metal cap
+set Tover     [expr ($tox+$thfo2+$Tgcap)]
+
+# Bottom nFET begins at the original nanosheet position.
+set XbBase    $AX0
+
+# Top face of the upper bottom sheet
+set XbTop     [expr ($AX1+($nStackB-1)*($H+$Tsige))]
+
+# FLAT PLANE 1: top of the bottom device (bottom gate top = bottom S/D epi top
+# = lower face of the bond oxide)
+set XbGateTop [expr ($XbTop+$Tover)]
+set XbEpiTop  $XbGateTop
+
+# FLAT PLANE 2: upper face of the bond oxide (bonding surface)
+set XtGateBot [expr ($XbGateTop+$Tbond)]
+
+# Bottom face of the lowest top sheet
+if { $topWrap } {
+    set XtBase [expr ($XtGateBot+$Tsige)]
+} else {
+    set XtBase $XtGateBot
+}
+
+# Derived distance between the two device stacks
+set Tmid      [expr ($XtBase-$XbTop)]
+
+# Top face of the upper top sheet and top of the top S/D epi
+set XtTop     [expr ($XtBase+$Htop+($nStackT-1)*($Htop+$Tsige))]
+set XtEpiTop  [expr ($XtTop+$Tover)]
+
+puts "Vertical stack: XbBase=$XbBase XbTop=$XbTop XbGateTop=$XbGateTop XtGateBot=$XtGateBot XtBase=$XtBase XtTop=$XtTop XtEpiTop=$XtEpiTop (Tmid=$Tmid)"
+
+
+#########################################################
+#########################################################
+
+set Hepi    [expr ($AX0-$Tepi)]
+set Hild    [expr ($AX0-$Tild)]
+
+# Structure starts at the backside contact plane (no BOX, no substrate)
+set Xmin    $Hild
+
+set Xmax    [expr ($XtEpiTop+$Tild)]
+
+
+#########################################################
+#########################################################
+
+# Profile (source side): Nsd for z < P0dop, Nsd*erfc((z-P0dop)/Ldiff) after.
+# It reaches Nch at z = P0dop + xj*Ldiff, placed at P0 + Lov, so
+#   P0dop = P0 - (xj*Ldiff - Lov)
+set dsh     [expr ($xj*$Ldiff - $Lov)]
+
+set P0dop   [expr ($P0-$dsh)]
+set P1dop   [expr ($P1+$dsh)]
+
+puts "Doping: dsh=$dsh  P0dop=$P0dop  P1dop=$P1dop"
+puts "        Pins0=$Pins0  Zsp0=$Zsp0  Zcont0=$Zcont0"
+puts "        junction at z=[expr ($P0dop+$xj*$Ldiff)]  (gate edge P0=$P0)"
+
+
+#########################################################
+#########################################################
+
+# Bottom nFET
+set XbOx0   [expr ($XbBase-$tox)]
+set XbOx1   [expr ($XbBase+$H+$tox)]
+set XbHf0   [expr ($XbBase-$tox-$thfo2)]
+set XbHf1   [expr ($XbBase+$H+$tox+$thfo2)]
+
+# Top pFET (uses Htop)
+set XtOx0   [expr ($XtBase-$tox)]
+set XtOx1   [expr ($XtBase+$Htop+$tox)]
+set XtHf0   [expr ($XtBase-$tox-$thfo2)]
+set XtHf1   [expr ($XtBase+$Htop+$tox+$thfo2)]
+
+
+#########################################################
+#########################################################
+
+SetTDRList {Dopants} !Solutions
+
+
+#########################################################
+#########################################################
+
+LN x $Hild [expr 0.2*$Tild] Xmin
+LN x $Hepi [expr 0.2*$Tepi]
+
+for {set i 0} {$i < $nStackB} {incr i} {
+
+    set off [expr ($XbBase+$i*($H+$Tsige))]
+
+    LN x [expr ($off-$tox-$thfo2)]     [expr 4.0*$dx]
+    LN x [expr ($off-$tox)]            [expr 2.0*$dx]
+    LN x $off                          $dx
+    LN x [expr ($off+0.5*$H)]          [expr 0.1*$H]
+    LN x [expr ($off+$H)]              $dx
+    LN x [expr ($off+$H+$tox)]         [expr 2.0*$dx]
+    LN x [expr ($off+$H+$tox+$thfo2)]  [expr 4.0*$dx]
+}
+
+
+#########################################################
+#########################################################
+
+LN x $XbGateTop [expr 2.0*$dx]
+LN x [expr (0.5*($XbGateTop+$XtGateBot))] [expr 0.15*$Tbond]
+LN x $XtGateBot [expr 2.0*$dx]
+
+
+#########################################################
+#########################################################
+
+for {set i 0} {$i < $nStackT} {incr i} {
+
+    set off [expr ($XtBase+$i*($Htop+$Tsige))]
+
+    LN x [expr ($off-$tox-$thfo2)]        [expr 4.0*$dx]
+    LN x [expr ($off-$tox)]               [expr 2.0*$dx]
+    LN x $off                             $dx
+    LN x [expr ($off+0.5*$Htop)]          [expr 0.1*$Htop]
+    LN x [expr ($off+$Htop)]              $dx
+    LN x [expr ($off+$Htop+$tox)]         [expr 2.0*$dx]
+    LN x [expr ($off+$Htop+$tox+$thfo2)]  [expr 4.0*$dx]
+}
+
+LN x $XtEpiTop [expr 0.2*$Tepi]
+
+LN x $Xmax [expr 0.2*$Tild] Xmax
+
+
+#########################################################
+#########################################################
+
+# Helper: add a y line unless one already exists within ytol.
+set ytol 0.1e-3
+set ylist [list $Y0 $Y1]
+
+proc YL {loc sp} {
+    global ylist ytol
+    foreach yy $ylist {
+        if { abs($loc - $yy) < $ytol } {
+            return
+        }
+    }
+    lappend ylist $loc
+    line y loc=$loc spacing=$sp
+}
+
+line y loc=$Y0  tag=Ymin spacing=[expr 8.0*$dx]
+line y loc=$Y1  tag=Ymax spacing=[expr 8.0*$dx]
+
+YL $Yhf0 [expr 4.0*$dx]
+YL $Yox0 [expr 2.0*$dx]
+YL $AY0  $dx
+YL 0.0   [expr 0.1*$W]
+YL $AY1  $dx
+YL $Yox1 [expr 2.0*$dx]
+YL $Yhf1 [expr 4.0*$dx]
+
+# Centres of the rounded sheet edges (cylinder centres): bottom and top
+YL [expr ($AY0+0.5*$H)]    [expr 2.0*$dx]
+YL [expr ($AY1-0.5*$H)]    [expr 2.0*$dx]
+YL [expr ($AY0+0.5*$Htop)] [expr 2.0*$dx]
+YL [expr ($AY1-0.5*$Htop)] [expr 2.0*$dx]
+
+
+#########################################################
+#########################################################
+
+# Helper: add a z line unless one already exists within ztol.
+set ztol 0.1e-3
+set zlist [list $Z0 $Z1]
+
+proc ZL {loc sp} {
+    global zlist ztol
+    foreach zz $zlist {
+        if { abs($loc - $zz) < $ztol } {
+            puts "ZL: skipping z line at $loc (already have one at $zz)"
+            return
+        }
+    }
+    lappend zlist $loc
+    line z loc=$loc spacing=$sp
+}
+
+# Fine spacing used where the doping profile is steep
+set dzf [expr {min($dz, 0.25*$Ldiff)}]
+
+# If a geometric line coincides with a doping-transition line, give the
+# geometric line the fine spacing (so the doping gradient is resolved).
+proc ZS {loc} {
+    global P0dop P1dop ztol dz dzf
+    if { abs($loc - $P0dop) < $ztol || abs($loc - $P1dop) < $ztol } {
+        return $dzf
+    }
+    return $dz
+}
+
+line z loc=$Z0 tag=Zmin spacing=[expr 2*$dz]
+
+ZL $Zcont0 [expr 2*$dz]
+ZL $Zsp0   [ZS $Zsp0]
+ZL $Pins0  [ZS $Pins0]
+ZL $P0     [ZS $P0]
+ZL $P1     [ZS $P1]
+ZL $Pins1  [ZS $Pins1]
+ZL $Zsp1   [ZS $Zsp1]
+ZL $Zcont1 [expr 2*$dz]
+
+# Doping transition lines (skipped automatically if a geometric line is there)
+ZL $P0dop  $dzf
+ZL $P1dop  $dzf
+
+line z loc=$Z1 tag=Zmax spacing=[expr 2*$dz]
+
+
+#########################################################
+#########################################################
+
+region Silicon xlo=Xmin xhi=Xmax ylo=Ymin yhi=Ymax zlo=Zmin zhi=Zmax
+
+puts "STAGE: before init"
+init
+puts "STAGE: after init"
+
+set e 0.1
+
+# Overlap-extended bounds used by the inserted bricks
+set Ylo   [expr ($Y0-$e)]
+set Yhi   [expr ($Y1+$e)]
+set Zlo   [expr ($Z0-$e)]
+set Zhi   [expr ($Z1+$e)]
+set Lext  [expr ($Ppitch+2*$e)]
+
+
+#########################################################
+#########################################################
+
+# Fill: replace materials in a brick with a new material/region.
+proc Fill {x0 y0 z0 x1 y1 z1 repl mat reg} {
+    polyhedron name=blk brick= [list $x0 $y0 $z0 $x1 $y1 $z1]
+    insert polyhedron=blk replace.materials= $repl \
+           new.material=$mat new.region=$reg
+    PolyHedronClear
+}
+
+# RoundSlab: a nanosheet-like slab with fully rounded ends (box + 2 cylinders
+# along z). x0..x1 is the thickness, y0..y1 the outer width (incl. round ends).
+proc RoundSlab {x0 x1 y0 y1 repl mat reg} {
+    global Zlo Zhi Lext
+
+    set R   [expr 0.5*($x1-$x0)]
+    set yA  [expr $y0+$R]
+    set yB  [expr $y1-$R]
+    set xm  [expr 0.5*($x0+$x1)]
+
+    if { $yB > $yA } {
+        polyhedron name=slab brick= [list $x0 $yA $Zlo $x1 $yB $Zhi]
+        insert polyhedron=slab replace.materials= $repl \
+               new.material=$mat new.region=$reg
+        PolyHedronClear
+    }
+
+    foreach yc [list $yA $yB] {
+        PolyHedronCylinder slab $Zlo $yc $xm $R $Lext Z
+        insert polyhedron=slab replace.materials= $repl \
+               new.material=$mat new.region=$reg
+        PolyHedronClear
+    }
+}
+
+
+#########################################################
+#########################################################
+
+for {set i 0} {$i < $nStackB} {incr i} {
+
+    set o [expr ($i*($H+$Tsige))]
+
+    # HfO2 gate high-k
+    RoundSlab [expr $XbHf0+$o] [expr $XbHf1+$o] $Yhf0 $Yhf1 {Silicon} HfO2 GateHighK_n_$i
+
+    # Gate oxide
+    RoundSlab [expr $XbOx0+$o] [expr $XbOx1+$o] $Yox0 $Yox1 {HfO2} Oxide GateOxide_n_$i
+
+    # Si nanosheet
+    RoundSlab [expr $XbBase+$o] [expr $XbBase+$H+$o] $AY0 $AY1 {Oxide} $ChMatN nChannel_$i
+}
+
+if { $debug } { WriteBND }
+
+
+#########################################################
+#########################################################
+
+for {set i 0} {$i < $nStackT} {incr i} {
+
+    set o [expr ($i*($Htop+$Tsige))]
+
+    # HfO2 gate high-k
+    RoundSlab [expr $XtHf0+$o] [expr $XtHf1+$o] $Yhf0 $Yhf1 {Silicon} HfO2 GateHighK_p_$i
+
+    # Gate oxide
+    RoundSlab [expr $XtOx0+$o] [expr $XtOx1+$o] $Yox0 $Yox1 {HfO2} Oxide GateOxide_p_$i
+
+    # Si nanosheet (material SiChP; Si(110) is applied in SDevice)
+    RoundSlab [expr $XtBase+$o] [expr $XtBase+$Htop+$o] $AY0 $AY1 {Oxide} $ChMatP pChannel_$i
+}
+
+if { $debug } { WriteBND }
+
+
+#########################################################
+#########################################################
+
+
+Fill $XbGateTop $Ylo $Zlo $XtGateBot $Yhi $Zhi {Silicon HfO2 Oxide} Oxide CFET_BOND
+
+if { $debug } { WriteBND }
+
+
+#########################################################
+#########################################################
+
+# Spacer bricks run up to Xmax so the cap above the top epi is LowK
+# (the top S/D metal replaces it later).
+
+# Drain side
+Fill $Hild $Ylo $P1    $Xmax $Yhi $Zhi {Silicon} LowK SPd
+Fill $Hild $Ylo $Pins1 $Xmax $Yhi $Zhi {HfO2}    LowK SPd
+
+# Source side
+Fill $Hild $Ylo $Zlo   $Xmax $Yhi $P0    {Silicon} LowK SPs
+Fill $Hild $Ylo $Zlo   $Xmax $Yhi $Pins0 {HfO2}    LowK SPs
+
+if { $debug } { WriteBND }
+
+
+#########################################################
+#########################################################
+
+# Only LowK is replaced, so the flat bond oxide is untouched.
+
+Fill $Hepi $Ylo $P1    $XtEpiTop $Yhi $Pins1 {LowK} HfO2 dHK
+Fill $Hepi $Ylo $Pins0 $XtEpiTop $Yhi $P0    {LowK} HfO2 sHK
+
+if { $debug } { WriteBND }
+
+
+#########################################################
+#########################################################
+
+# Up to XbGateTop: same plane as the top of the bottom gate.
+
+Fill $Hepi $Ylo $Zsp1 $XbGateTop $Yhi $Zhi  {LowK Oxide} $SdMatN dEpi_n
+Fill $Hepi $Ylo $Zlo  $XbGateTop $Yhi $Zsp0 {LowK Oxide} $SdMatN sEpi_n
+
+
+#########################################################
+#########################################################
+
+# From XtGateBot (upper face of the bond oxide) up to XtEpiTop.
+# Plain Si S/D (boron-doped later).
+
+Fill $XtGateBot $Ylo $Zsp1 $XtEpiTop $Yhi $Zhi  {LowK Oxide} $SdMatP dEpi_p
+Fill $XtGateBot $Ylo $Zlo  $XtEpiTop $Yhi $Zsp0 {LowK Oxide} $SdMatP sEpi_p
+
+if { $debug } { WriteBND }
+
+
+#########################################################
+#########################################################
+
+# Bottom gate: Hild .. XbGateTop (contacted from below).
+# Top gate:    XtGateBot .. Xmax (contacted from above).
+# The flat bond oxide keeps them apart.
+
+Fill $Hild      $Ylo $P0 $XbGateTop $Yhi $P1 {Silicon} Tungsten GateMetal_n
+Fill $XtGateBot $Ylo $P0 $Xmax      $Yhi $P1 {Silicon} Tungsten GateMetal_p
+
+if { $debug } { WriteBND }
+
+
+#########################################################
+#########################################################
+
+Fill $Hild $Ylo $Zcont1 $Hepi $Yhi $Zhi    {LowK} Tungsten dMetal_n
+Fill $Hild $Ylo $Zlo    $Hepi $Yhi $Zcont0 {LowK} Tungsten sMetal_n
+
+
+#########################################################
+#########################################################
+
+Fill $XtEpiTop $Ylo $Zcont1 $Xmax $Yhi $Zhi    {LowK} Tungsten dMetal_p
+Fill $XtEpiTop $Ylo $Zlo    $Xmax $Yhi $Zcont0 {LowK} Tungsten sMetal_p
+
+if { $debug } { WriteBND }
+
+
+#########################################################
+#########################################################
+
+# No substrate electrode (no substrate in this structure).
+
+# Helper: put region r2 into the same contact as r1 (common contact).
+# If "add" is not accepted by your version, r2 gets its own contact (alt2);
+# then tie the two in SDevice.
+proc MakeCommon {cname r1 r2 alt2} {
+    contact name=$cname region=$r1 replace
+    if { [catch {contact name=$cname region=$r2 add} errAdd] } {
+        puts "WARNING: could not add $r2 to contact $cname ($errAdd); using separate contact $alt2"
+        contact name=$alt2 region=$r2 replace
+    }
+}
+
+# ---- Gates ----
+if { $commonGate } {
+    MakeCommon gate GateMetal_n GateMetal_p gate_p
+} else {
+    contact name=gate_n region=GateMetal_n replace
+    contact name=gate_p region=GateMetal_p replace
+}
+
+# ---- Source / drain (numbering matches the SDevice file) ----
+if { $contactMode == 0 } {
+    contact name=source_n region=sMetal_n replace
+    contact name=drain_n  region=dMetal_n replace
+    contact name=source_p region=sMetal_p replace
+    contact name=drain_p  region=dMetal_p replace
+} elseif { $contactMode == 1 } {
+    contact name=source_n region=sMetal_n replace
+    contact name=source_p region=sMetal_p replace
+    MakeCommon drain dMetal_n dMetal_p drain_p
+} else {
+    MakeCommon source sMetal_n sMetal_p source_p
+    MakeCommon drain  dMetal_n dMetal_p drain_p
+}
+
+
+#########################################################
+#########################################################
+
+WriteBND
+
+struct tdr=n@node@_CFET_mesh_fps.tdr \
+       !Gas !interfaces !alt.maternames pdb !bnd !Adaptive
+
+
+#########################################################
+#########################################################
+
+# Erfc-shaped S/D profile along z (channel direction); constants are
+# substituted into the string now, "z" is the Sprocess coordinate.
+set SDprof "(z>0)?((z>($P1dop))?$Nsd:($Nsd*erfc(-1*(z-($P1dop))/$Ldiff))):((z<($P0dop))?$Nsd:($Nsd*erfc((z-($P0dop))/$Ldiff)))"
+
+
+#########################################################
+#########################################################
+
+select name=$DchN $ChMatN store z=$Nch
+select name=$DsdN $ChMatN store z=$SDprof
+select name=$DsdN $SdMatN store z=$Nsd
+
+# Thermal steps of the TOP-FET process, applied while only the bottom
+# nFET dopants exist (run only if doThermal=1; always logged).
+THERMAL "top_S/D_epi_equiv"           $T_EPI  $t_EPI  $doThermal
+THERMAL "top_gate_stack_reliability"  $T_RELI $t_RELI $doThermal
+
+
+#########################################################
+#########################################################
+
+select name=$DchP $ChMatP store z=$Nch
+select name=$DsdP $ChMatP store z=$SDprof
+select name=$DsdP $SdMatP store z=$Nsd
+
+
+#########################################################
+#########################################################
+
+# Default 1 us at Tact: activation without real diffusion.
+# Raise tAct to see S/D extension into the channel.
+THERMAL "activation_anneal" $Tact $tAct 1
+
+close $TB_LOG
+
+
+#########################################################
+#########################################################
+
+select name=DopingConcentration $ChMatP store z="NetActive"
+select name=DopingConcentration $SdMatP store z="NetActive"
+
+select name=DopingConcentration $ChMatN store z="NetActive"
+select name=DopingConcentration $SdMatN store z="NetActive"
+
+
+#########################################################
+#########################################################
+
+SetTDRList {DopingConcentration NetActive BActive PActive} !Solutions
+
+struct tdr=n@node@_CFET_fps.tdr \
+       !Gas !interfaces alt.maternames !pdb !bnd

@@ -1,0 +1,940 @@
+#---------------------------------------------------------------------#
+# CALIBRATION AND MATERIAL DEFINITIONS
+#---------------------------------------------------------------------#
+# Load calibrated material parameters before defining the device materials.
+AdvancedCalibration
+
+set contactMode @contactMode@
+
+set sdevSiGe    1
+
+set sdSiGe      1
+
+mater add name=LowK new.like=Oxide
+
+if { $sdevSiGe } {
+    mater add name=SiGe new.like=Silicon alt.matername=SiliconGermanium
+} else {
+    mater add name=SiGe new.like=Silicon alt.matername=Silicon
+}
+
+mater add name=SiChN new.like=Silicon alt.matername=Silicon
+
+if { $sdevSiGe && $sdSiGe } {
+    mater add name=SiSDP new.like=Silicon alt.matername=SiliconGermanium
+} else {
+    mater add name=SiSDP new.like=Silicon alt.matername=Silicon
+}
+
+mater add name=SiSDN new.like=Silicon alt.matername=Silicon
+
+#define _ChMatP_ SiGe
+#define _ChMatN_ SiChN
+#define _SdMatP_ SiSDP
+#define _SdMatN_ SiSDN
+
+#---------------------------------------------------------------------#
+# DOPING AND MATERIAL-COMPOSITION PARAMETERS
+#---------------------------------------------------------------------#
+# Set channel, source/drain and channel-stop doping for both transistors.
+set Nch      1.0e15
+set Nsd      5.0e20
+set Nstop    5.0e18
+
+set DchN     "Boron"
+set DsdN     "Phosphorus"
+
+set DchP     "Phosphorus"
+set DsdP     "Boron"
+
+set Dstop    "Boron"
+
+set xGe      0.2
+
+set Tact     1000
+
+set Ldiff 2.0e-3
+set xj    3.2
+set Lov   1.0e-3
+
+set splitGate 0
+
+#---------------------------------------------------------------------#
+# USER PROCEDURES AND DEBUG OUTPUT
+#---------------------------------------------------------------------#
+# Load helper procedures and define intermediate boundary-file output.
+source user_proc.fps
+
+proc WriteBND {} {
+        global count
+
+        if { $count < 10} {
+           struct tdr.bnd=n@node@_0${count}
+        } else {
+           struct tdr.bnd=n@node@_${count}
+        }
+
+        set count [expr $count+1]
+}
+
+set count 1
+
+#---------------------------------------------------------------------#
+# SIMULATION CONTROL AND BASE MESH PARAMETERS
+#---------------------------------------------------------------------#
+# Enable intermediate structure exports and load the process helper library.
+set debug           1
+
+source PH_LIB.fps
+
+sde off
+
+set dx      0.5e-3
+set dz      @zSpacing@
+
+set ChRegionName  @preNLregionName@
+
+#---------------------------------------------------------------------#
+# CFET STRUCTURE AND GEOMETRY PARAMETERS
+#---------------------------------------------------------------------#
+# Define the bottom nFET, top pFET, middle gap and device dimensions.
+set nStackB     1
+
+set nStackT     1
+
+set Tmid        20.0e-3
+
+set Tmetmin     5.0e-3
+
+set W        @W@
+set H        @H@
+set tox      @tox@
+set thfo2    @thfo2@
+set Lg       @L@
+
+set Ppitch   42.0e-3
+set FPpitch  40.0e-3
+
+set Tsige    10.0e-3
+set Tepi     5.0e-3
+set Tild     15.0e-3
+
+set LspLK    5.0e-3
+
+set Wcont    6.0e-3
+set Lepimin  3.0e-3
+set Lcont    [expr (0.5*$Ppitch - 0.5*$Lg - $Wcont)]
+set zmerge   0.6e-3
+
+set Lgins    [expr round(($tox+$thfo2)/$dz)*$dz]
+puts "Lgins = $Lgins (tox+thfo2=[expr $tox+$thfo2], dz = $dz)"
+puts "Lcont = $Lcont (Ppitch=$Ppitch, Lg=$Lg, Wcont=$Wcont)"
+
+#---------------------------------------------------------------------#
+# GEOMETRY CONSISTENCY CHECKS
+#---------------------------------------------------------------------#
+# Check that the gate stack, spacers, contacts and nanosheet dimensions fit.
+if { $Lgins <= 0 } {
+    puts "Lgins is 0: dz=$dz is too coarse compared with tox+thfo2=[expr $tox+$thfo2]"
+    exit
+}
+
+if { $LspLK < $Lgins } {
+    puts "Check the low-k spacer length LspLK=$LspLK and Lgins=$Lgins ..."
+    exit
+}
+
+if { $Lcont < ($LspLK + $Lepimin) } {
+    puts "Lcont=$Lcont is too short: need >= LspLK+Lepimin = [expr $LspLK+$Lepimin]. Reduce Wcont, Lg or LspLK, or increase Ppitch."
+    exit
+}
+
+if { $FPpitch < ($W + 2*($tox+$thfo2)) } {
+    puts "Foot print pitch should be larger than W + 2*(tox+thfo2)"
+    exit
+}
+
+if { $Tsige < (2*($tox+$thfo2)) } {
+    puts "Distance between nano-slabs should be larger than 2*(tox+thfo2)"
+    exit
+}
+
+if { $W < $H } {
+    puts "Nano-slab width should be larger than the thickness."
+    exit
+}
+
+if { $Tmid < (2*($tox+$thfo2)+$Tmetmin) } {
+    puts "Tmid must be at least 2*(tox+thfo2) + Tmetmin so the gate metal does not pinch off"
+    exit
+}
+
+if { $Lov < 0 || ($Lg - 2*$Lov) <= 0 } {
+    puts "Lov=$Lov is invalid for Lg=$Lg (need 0 <= Lov < Lg/2)"
+    exit
+}
+
+#---------------------------------------------------------------------#
+# DERIVED COORDINATES
+#---------------------------------------------------------------------#
+# Calculate nanosheet, gate, spacer, contact and footprint boundaries.
+set AX0     [expr (-0.5*$H)]
+set AX1     [expr ( 0.5*$H)]
+
+set AY0     [expr (-0.5*$W)]
+set AY1     [expr ( 0.5*$W)]
+
+set P0      [expr (-0.5*$Lg)]
+set P1      [expr ( 0.5*$Lg)]
+
+set Pins0   [expr ($P0-$Lgins)]
+set Pins1   [expr ($P1+$Lgins)]
+
+set Zsp0    [expr ($P0-$LspLK)]
+set Zsp1    [expr ($P1+$LspLK)]
+
+set Zcont0  [expr ($P0-$Lcont)]
+set Zcont1  [expr ($P1+$Lcont)]
+
+set Z0      [expr (-0.5*$Ppitch)]
+set Z1      [expr ( 0.5*$Ppitch)]
+
+set Yox0    [expr ($AY0-$tox)]
+set Yox1    [expr ($AY1+$tox)]
+
+set Yhf0    [expr ($AY0-$tox-$thfo2)]
+set Yhf1    [expr ($AY1+$tox+$thfo2)]
+
+set Y0      [expr (-0.5*$FPpitch)]
+set Y1      [expr ( 0.5*$FPpitch)]
+
+# Vertical placement of the bottom nFET and top pFET stacks.
+set XbBase  $AX0
+
+set XbTop   [expr ($AX1+($nStackB-1)*($H+$Tsige))]
+
+set XtBase  [expr ($XbTop+$Tmid)]
+
+set XtTop   [expr ($XtBase+$H+($nStackT-1)*($H+$Tsige))]
+
+set XbEpiTop  $XbTop
+set XtEpiTop  [expr ($XtBase+$nStackT*($H+$Tsige))]
+
+set Xmid    [expr (0.5*($XbTop+$XtBase))]
+
+# Substrate, buried-oxide (BOX), ILD and surrounding-region coordinates.
+set Tbox    15.0e-3
+set Tsub    20.0e-3
+
+set Hepi    [expr ($AX0-$Tepi)]
+set Hild    [expr ($AX0-$Tild)]
+set Hbox    [expr ($Hild-$Tbox)]
+set Hsub    [expr ($Hbox-$Tsub)]
+set Hgas    [expr ($Hsub-0.001)]
+
+set Xmin    $Hsub
+
+set Xmax    [expr ($XtTop+$Tepi+$Tild)]
+
+# Locate the source/drain doping transitions relative to the gate edges.
+set dsh     [expr ($xj*$Ldiff - $Lov)]
+
+set P0dop   [expr ($P0-$dsh)]
+set P1dop   [expr ($P1+$dsh)]
+
+puts "Doping: dsh=$dsh P0dop=$P0dop  P1dop=$P1dop"
+puts "        Pins0=$Pins0 Zsp0=$Zsp0  Zcont0=$Zcont0"
+puts "        junction at z=[expr ($P0dop+$xj*$Ldiff)] (gate edge P0=$P0)"
+
+# Gate-oxide and HfO2 boundary coordinates for the bottom and top devices.
+set XbOx0   [expr ($XbBase-$tox)]
+set XbOx1   [expr ($XbBase+$H+$tox)]
+set XbHf0   [expr ($XbBase-$tox-$thfo2)]
+set XbHf1   [expr ($XbBase+$H+$tox+$thfo2)]
+
+set XtOx0   [expr ($XtBase-$tox)]
+set XtOx1   [expr ($XtBase+$H+$tox)]
+set XtHf0   [expr ($XtBase-$tox-$thfo2)]
+set XtHf1   [expr ($XtBase+$H+$tox+$thfo2)]
+
+#---------------------------------------------------------------------#
+# THREE-DIMENSIONAL MESH DEFINITION
+#---------------------------------------------------------------------#
+# Define non-uniform mesh lines in X, Y and Z, refining critical device regions.
+SetTDRList {Dopants} !Solutions
+
+# X mesh: substrate, BOX, ILD, epi and nanosheet-stack boundaries.
+line x loc=$Hgas  tag=Xgas  spacing=[expr 0.2*$Tild]
+line x loc=$Hsub  tag=Xmin  spacing=[expr 0.2*$Tild]
+line x loc=$Hbox  spacing=[expr 0.2*$Tbox]
+line x loc=$Hild  spacing=[expr 0.2*$Tild]
+line x loc=$Hepi  spacing=[expr 0.2*$Tepi]
+
+for {set i 0} {$i < $nStackB} {incr i} {
+
+    set off [expr ($XbBase+$i*($H+$Tsige))]
+
+    line x loc=[expr ($off-$tox-$thfo2)] spacing=[expr 4.0*$dx]
+    line x loc=[expr ($off-$tox)]        spacing=[expr 2.0*$dx]
+    line x loc=$off                      spacing=$dx
+    line x loc=[expr ($off+0.5*$H)]      spacing=[expr 0.1*$H]
+    line x loc=[expr ($off+$H)]          spacing=$dx
+    line x loc=[expr ($off+$H+$tox)]     spacing=[expr 2.0*$dx]
+    line x loc=[expr ($off+$H+$tox+$thfo2)] spacing=[expr 4.0*$dx]
+}
+
+line x loc=$Xmid  spacing=[expr 0.05*$Tmid]
+
+for {set i 0} {$i < $nStackT} {incr i} {
+
+    set off [expr ($XtBase+$i*($H+$Tsige))]
+
+    line x loc=[expr ($off-$tox-$thfo2)] spacing=[expr 4.0*$dx]
+    line x loc=[expr ($off-$tox)]        spacing=[expr 2.0*$dx]
+    line x loc=$off                      spacing=$dx
+    line x loc=[expr ($off+0.5*$H)]      spacing=[expr 0.1*$H]
+    line x loc=[expr ($off+$H)]          spacing=$dx
+    line x loc=[expr ($off+$H+$tox)]     spacing=[expr 2.0*$dx]
+    line x loc=[expr ($off+$H+$tox+$thfo2)] spacing=[expr 4.0*$dx]
+}
+
+line x loc=$XtEpiTop  spacing=[expr 0.2*$Tepi]
+
+line x loc=$Xmax  tag=Xmax  spacing=[expr 0.2*$Tild]
+
+# Y mesh: nanosheet width, rounded edges and dielectric boundaries.
+line y loc=$Y0   tag=Ymin  spacing=[expr 8.0*$dx]
+line y loc=$Yhf0 spacing=[expr 4.0*$dx]
+line y loc=$Yox0 spacing=[expr 2.0*$dx]
+line y loc=$AY0  spacing=$dx
+
+set Yc0 [expr ($AY0+0.5*$H)]
+set Yc1 [expr ($AY1-0.5*$H)]
+if { [expr {abs($Yc0)}] > 0.1e-3 } {
+    line y loc=$Yc0 spacing=[expr 2.0*$dx]
+    line y loc=$Yc1 spacing=[expr 2.0*$dx]
+}
+
+line y loc=0     spacing=[expr 0.1*$W]
+line y loc=$AY1  spacing=$dx
+line y loc=$Yox1 spacing=[expr 2.0*$dx]
+line y loc=$Yhf1 spacing=[expr 4.0*$dx]
+line y loc=$Y1   tag=Ymax  spacing=[expr 8.0*$dx]
+
+# Z mesh: register, sort and validate geometric and doping-transition lines.
+# Nearby doping lines can merge with fixed geometric lines while retaining fine spacing.
+set dzf [expr {min($dz, 0.25*$Ldiff)}]
+set zreq {}
+proc ZREQ {nm loc sp fx} {
+    global zreq
+    lappend zreq [list $nm $loc $sp $fx]
+}
+
+ZREQ Z0      $Z0      [expr 2*$dz] 1
+ZREQ Zcont0  $Zcont0  [expr 2*$dz] 1
+ZREQ Zsp0    $Zsp0    $dz          1
+ZREQ Pins0   $Pins0   $dz          1
+ZREQ P0      $P0      $dz          1
+ZREQ P1      $P1      $dz          1
+ZREQ Pins1   $Pins1   $dz          1
+ZREQ Zsp1    $Zsp1    $dz          1
+ZREQ Zcont1  $Zcont1  [expr 2*$dz] 1
+ZREQ Z1      $Z1      [expr 2*$dz] 1
+ZREQ P0dop   $P0dop   $dzf         0
+ZREQ P1dop   $P1dop   $dzf         0
+
+set zout {}
+set zbad 0
+foreach r [lsort -real -index 1 $zreq] {
+    foreach {nm loc sp fx} $r {}
+    if { [llength $zout] == 0 } { lappend zout $r ; continue }
+    foreach {pnm ploc psp pfx} [lindex $zout end] {}
+    set gap [expr {$loc - $ploc}]
+    if { $gap >= $zmerge } {
+        lappend zout $r
+    } elseif { $fx && $pfx } {
+        puts "ERROR: fixed z lines $pnm ($ploc) and $nm ($loc) are [expr {$gap*1.0e3}] nm apart (zmerge = [expr {$zmerge*1.0e3}] nm)"
+        set zbad 1
+        lappend zout $r
+    } elseif { $fx } {
+        lset zout end [list $nm $loc [expr {min($sp,$psp)}] 1]
+    } else {
+        lset zout end 2 [expr {min($sp,$psp)}]
+    }
+}
+
+if { $zbad } {
+    puts "Adjust Lg, LspLK, Lgins, Wcont or Ppitch so fixed z lines are >= zmerge apart."
+    exit
+}
+
+set zn [llength $zout]
+puts "---- z mesh lines ----"
+for {set k 0} {$k < $zn} {incr k} {
+    foreach {nm loc sp fx} [lindex $zout $k] {}
+    set gl 1.0e9
+    set gr 1.0e9
+    if { $k > 0 }       { set gl [expr {$loc - [lindex $zout [expr $k-1] 1]}] }
+    if { $k < $zn-1 }   { set gr [expr {[lindex $zout [expr $k+1] 1] - $loc}] }
+    set spe [expr {min($sp, min($gl,$gr))}]
+    puts [format "  %-7s z=%8.3f nm  spacing=%6.3f nm" $nm [expr {$loc*1.0e3}] [expr {$spe*1.0e3}]]
+    if { $nm == "Z0" } {
+        line z loc=$loc tag=Zmin spacing=$spe
+    } elseif { $nm == "Z1" } {
+        line z loc=$loc tag=Zmax spacing=$spe
+    } else {
+        line z loc=$loc spacing=$spe
+    }
+}
+
+#---------------------------------------------------------------------#
+# BACKGROUND REGIONS AND INITIALIZATION
+#---------------------------------------------------------------------#
+# Create the background gas and silicon regions before building the CFET.
+region Gas     xlo=Xgas xhi=Xmin ylo=Ymin yhi=Ymax zlo=Zmin zhi=Zmax
+region Silicon xlo=Xmin xhi=Xmax ylo=Ymin yhi=Ymax zlo=Zmin zhi=Zmax
+
+init
+
+# Extend inserted geometry slightly beyond the footprint to avoid edge gaps.
+set e 0.1
+
+set Ylo   [expr ($Y0-$e)]
+set Yhi   [expr ($Y1+$e)]
+set Zlo   [expr ($Z0-$e)]
+set Zhi   [expr ($Z1+$e)]
+set Lext  [expr ($Ppitch+2*$e)]
+
+#---------------------------------------------------------------------#
+# BURIED OXIDE (BOX) FORMATION
+#---------------------------------------------------------------------#
+# Replace the silicon slab below the devices with oxide for bottom isolation.
+polyhedron name=boxsub brick= [list $Hbox $Ylo $Zlo $Hild $Yhi $Zhi]
+
+insert polyhedron=boxsub replace.materials= { Silicon } \
+       new.material=Oxide new.region=BOX_sub
+
+PolyHedronClear
+
+if { $debug } { WriteBND }
+
+#---------------------------------------------------------------------#
+# BOTTOM nFET: GATE DIELECTRIC AND SILICON NANOSHEET
+#---------------------------------------------------------------------#
+# Form the HfO2 high-k layer, interfacial oxide and rounded Si channel.
+for {set i 0} {$i < $nStackB} {incr i} {
+
+    set tx0 [expr ($XbHf0+$i*($H+$Tsige))]
+    set tx1 [expr ($XbHf1+$i*($H+$Tsige))]
+    set txm [expr (0.5*($tx0+$tx1))]
+
+    set Rhf [expr (0.5*$H+$tox+$thfo2)]
+    set yA  [expr ($Yhf0+$Rhf)]
+    set yB  [expr ($Yhf1-$Rhf)]
+
+    polyhedron name=hf brick= [list $tx0 $yA $Zlo $tx1 $yB $Zhi]
+
+    insert polyhedron=hf replace.materials= { Silicon } \
+           new.material=HfO2 new.region=GateHighK_n_$i
+
+    PolyHedronClear
+
+    PolyHedronCylinder hf $Zlo $yA $txm $Rhf $Lext Z
+
+    insert polyhedron=hf replace.materials= { Silicon } \
+           new.material=HfO2 new.region=GateHighK_n_$i
+
+    PolyHedronClear
+
+    PolyHedronCylinder hf $Zlo $yB $txm $Rhf $Lext Z
+
+    insert polyhedron=hf replace.materials= { Silicon } \
+           new.material=HfO2 new.region=GateHighK_n_$i
+
+    PolyHedronClear
+
+    set tx0 [expr ($XbOx0+$i*($H+$Tsige))]
+    set tx1 [expr ($XbOx1+$i*($H+$Tsige))]
+    set txm [expr (0.5*($tx0+$tx1))]
+
+    set Rox [expr (0.5*$H+$tox)]
+    set yA  [expr ($Yox0+$Rox)]
+    set yB  [expr ($Yox1-$Rox)]
+
+    polyhedron name=gox brick= [list $tx0 $yA $Zlo $tx1 $yB $Zhi]
+
+    insert polyhedron=gox replace.materials= { HfO2 } \
+           new.material=Oxide new.region=GateOxide_n_$i
+
+    PolyHedronClear
+
+    PolyHedronCylinder gox $Zlo $yA $txm $Rox $Lext Z
+
+    insert polyhedron=gox replace.materials= { HfO2 } \
+           new.material=Oxide new.region=GateOxide_n_$i
+
+    PolyHedronClear
+
+    PolyHedronCylinder gox $Zlo $yB $txm $Rox $Lext Z
+
+    insert polyhedron=gox replace.materials= { HfO2 } \
+           new.material=Oxide new.region=GateOxide_n_$i
+
+    PolyHedronClear
+
+    set tx0 [expr ($XbBase+$i*($H+$Tsige))]
+    set tx1 [expr ($XbBase+$H+$i*($H+$Tsige))]
+    set txm [expr (0.5*($tx0+$tx1))]
+
+    set Rns [expr (0.5*$H)]
+    set yA  [expr ($AY0+$Rns)]
+    set yB  [expr ($AY1-$Rns)]
+
+    polyhedron name=ns brick= [list $tx0 $yA $Zlo $tx1 $yB $Zhi]
+
+    insert polyhedron=ns replace.materials= { Oxide } \
+           new.material=_ChMatN_ new.region=nChannel_$i
+
+    PolyHedronClear
+
+    PolyHedronCylinder ns $Zlo $yA $txm $Rns $Lext Z
+
+    insert polyhedron=ns replace.materials= { Oxide } \
+           new.material=_ChMatN_ new.region=nChannel_$i
+
+    PolyHedronClear
+
+    PolyHedronCylinder ns $Zlo $yB $txm $Rns $Lext Z
+
+    insert polyhedron=ns replace.materials= { Oxide } \
+           new.material=_ChMatN_ new.region=nChannel_$i
+
+    PolyHedronClear
+}
+
+if { $debug } { WriteBND }
+
+#---------------------------------------------------------------------#
+# TOP pFET: GATE DIELECTRIC AND SiGe NANOSHEET
+#---------------------------------------------------------------------#
+# Form the HfO2 high-k layer, interfacial oxide and rounded pFET channel.
+for {set i 0} {$i < $nStackT} {incr i} {
+
+    set tx0 [expr ($XtHf0+$i*($H+$Tsige))]
+    set tx1 [expr ($XtHf1+$i*($H+$Tsige))]
+    set txm [expr (0.5*($tx0+$tx1))]
+
+    set Rhf [expr (0.5*$H+$tox+$thfo2)]
+    set yA  [expr ($Yhf0+$Rhf)]
+    set yB  [expr ($Yhf1-$Rhf)]
+
+    polyhedron name=hf brick= [list $tx0 $yA $Zlo $tx1 $yB $Zhi]
+
+    insert polyhedron=hf replace.materials= { Silicon } \
+           new.material=HfO2 new.region=GateHighK_p_$i
+
+    PolyHedronClear
+
+    PolyHedronCylinder hf $Zlo $yA $txm $Rhf $Lext Z
+
+    insert polyhedron=hf replace.materials= { Silicon } \
+           new.material=HfO2 new.region=GateHighK_p_$i
+
+    PolyHedronClear
+
+    PolyHedronCylinder hf $Zlo $yB $txm $Rhf $Lext Z
+
+    insert polyhedron=hf replace.materials= { Silicon } \
+           new.material=HfO2 new.region=GateHighK_p_$i
+
+    PolyHedronClear
+
+    set tx0 [expr ($XtOx0+$i*($H+$Tsige))]
+    set tx1 [expr ($XtOx1+$i*($H+$Tsige))]
+    set txm [expr (0.5*($tx0+$tx1))]
+
+    set Rox [expr (0.5*$H+$tox)]
+    set yA  [expr ($Yox0+$Rox)]
+    set yB  [expr ($Yox1-$Rox)]
+
+    polyhedron name=gox brick= [list $tx0 $yA $Zlo $tx1 $yB $Zhi]
+
+    insert polyhedron=gox replace.materials= { HfO2 } \
+           new.material=Oxide new.region=GateOxide_p_$i
+
+    PolyHedronClear
+
+    PolyHedronCylinder gox $Zlo $yA $txm $Rox $Lext Z
+
+    insert polyhedron=gox replace.materials= { HfO2 } \
+           new.material=Oxide new.region=GateOxide_p_$i
+
+    PolyHedronClear
+
+    PolyHedronCylinder gox $Zlo $yB $txm $Rox $Lext Z
+
+    insert polyhedron=gox replace.materials= { HfO2 } \
+           new.material=Oxide new.region=GateOxide_p_$i
+
+    PolyHedronClear
+
+    set tx0 [expr ($XtBase+$i*($H+$Tsige))]
+    set tx1 [expr ($XtBase+$H+$i*($H+$Tsige))]
+    set txm [expr (0.5*($tx0+$tx1))]
+
+    set Rns [expr (0.5*$H)]
+    set yA  [expr ($AY0+$Rns)]
+    set yB  [expr ($AY1-$Rns)]
+
+    polyhedron name=ns brick= [list $tx0 $yA $Zlo $tx1 $yB $Zhi]
+
+    insert polyhedron=ns replace.materials= { Oxide } \
+           new.material=_ChMatP_ new.region=pChannel_$i
+
+    PolyHedronClear
+
+    PolyHedronCylinder ns $Zlo $yA $txm $Rns $Lext Z
+
+    insert polyhedron=ns replace.materials= { Oxide } \
+           new.material=_ChMatP_ new.region=pChannel_$i
+
+    PolyHedronClear
+
+    PolyHedronCylinder ns $Zlo $yB $txm $Rns $Lext Z
+
+    insert polyhedron=ns replace.materials= { Oxide } \
+           new.material=_ChMatP_ new.region=pChannel_$i
+
+    PolyHedronClear
+}
+
+if { $debug } { WriteBND }
+
+#---------------------------------------------------------------------#
+# MIDDLE DIELECTRIC ISOLATION (MDI)
+#---------------------------------------------------------------------#
+# Fill the inter-device gap in the source/drain regions, leaving the gate region open.
+set tx0 $XbTop
+set tx1 $XtBase
+
+polyhedron name=mdi brick= [list $tx0 $Ylo $Zlo $tx1 $Yhi $Pins0]
+
+insert polyhedron=mdi replace.materials= { Silicon HfO2 Oxide } \
+       new.material=Oxide new.region=CFET_MDI_s
+
+PolyHedronClear
+
+polyhedron name=mdi brick= [list $tx0 $Ylo $Pins1 $tx1 $Yhi $Zhi]
+
+insert polyhedron=mdi replace.materials= { Silicon HfO2 Oxide } \
+       new.material=Oxide new.region=CFET_MDI_d
+
+PolyHedronClear
+
+if { $debug } { WriteBND }
+
+#---------------------------------------------------------------------#
+# OPTIONAL TRI-GATE CONFIGURATION
+#---------------------------------------------------------------------#
+# When enabled, the bottom face of the lowest nFET sheet is isolated in the gate region.
+set triBottom 0
+
+if { $triBottom } {
+
+    polyhedron name=box brick= [list $Hild $Ylo $Pins0 $XbBase $Yhi $Pins1]
+
+    insert polyhedron=box replace.materials= { Silicon HfO2 Oxide } \
+           new.material=Oxide new.region=BOX_gate
+
+    PolyHedronClear
+
+    if { $debug } { WriteBND }
+}
+
+#---------------------------------------------------------------------#
+# LOW-K SOURCE/DRAIN SPACERS
+#---------------------------------------------------------------------#
+# Replace the spacer regions beside the gate with LowK dielectric.
+set tx0 $Hild
+set tx1 $Xmax
+
+polyhedron name=lowk brick= [list $tx0 $Ylo $P1 $tx1 $Yhi $Zhi]
+
+insert polyhedron=lowk replace.materials= { Silicon } \
+       new.material=LowK new.region=SPd
+
+PolyHedronClear
+
+polyhedron name=lowk brick= [list $tx0 $Ylo $Pins1 $tx1 $Yhi $Zhi]
+
+insert polyhedron=lowk replace.materials= { HfO2 } \
+       new.material=LowK new.region=SPd
+
+PolyHedronClear
+
+polyhedron name=lowk brick= [list $tx0 $Ylo $Zlo $tx1 $Yhi $P0]
+
+insert polyhedron=lowk replace.materials= { Silicon } \
+       new.material=LowK new.region=SPs
+
+PolyHedronClear
+
+polyhedron name=lowk brick= [list $tx0 $Ylo $Zlo $tx1 $Yhi $Pins0]
+
+insert polyhedron=lowk replace.materials= { HfO2 } \
+       new.material=LowK new.region=SPs
+
+PolyHedronClear
+
+if { $debug } { WriteBND }
+
+#---------------------------------------------------------------------#
+# HfO2 GATE SIDEWALL DIELECTRIC
+#---------------------------------------------------------------------#
+# Form continuous high-k sidewall regions along the CFET stack.
+set tx0 $Hepi
+set tx1 $XtEpiTop
+
+polyhedron name=hf brick= [list $tx0 $Ylo $P1 $tx1 $Yhi $Pins1]
+
+insert polyhedron=hf replace.materials= { LowK } \
+       new.material=HfO2 new.region=dHK
+
+PolyHedronClear
+
+polyhedron name=hf brick= [list $tx0 $Ylo $Pins0 $tx1 $Yhi $P0]
+
+insert polyhedron=hf replace.materials= { LowK } \
+       new.material=HfO2 new.region=sHK
+
+PolyHedronClear
+
+if { $debug } { WriteBND }
+
+#---------------------------------------------------------------------#
+# SOURCE/DRAIN EPITAXY: BOTTOM nFET
+#---------------------------------------------------------------------#
+# Form the bottom nFET source and drain epi regions.
+set tx0 $Hepi
+set tx1 $XbTop
+
+polyhedron name=epi brick= [list $tx0 $Ylo $Zsp1 $tx1 $Yhi $Zhi]
+
+insert polyhedron=epi replace.materials= { LowK Oxide } \
+       new.material=SiSDN new.region=dEpi_n
+
+PolyHedronClear
+
+polyhedron name=epi brick= [list $tx0 $Ylo $Zlo $tx1 $Yhi $Zsp0]
+
+insert polyhedron=epi replace.materials= { LowK Oxide } \
+       new.material=SiSDN new.region=sEpi_n
+
+PolyHedronClear
+
+#---------------------------------------------------------------------#
+# SOURCE/DRAIN EPITAXY: TOP pFET
+#---------------------------------------------------------------------#
+# Form the top pFET source and drain epi regions using the selected SiGe/Si material.
+set tx0 $XtBase
+set tx1 $XtEpiTop
+
+polyhedron name=epi brick= [list $tx0 $Ylo $Zsp1 $tx1 $Yhi $Zhi]
+
+insert polyhedron=epi replace.materials= { LowK Oxide } \
+       new.material=SiSDP new.region=dEpi_p
+
+PolyHedronClear
+
+polyhedron name=epi brick= [list $tx0 $Ylo $Zlo $tx1 $Yhi $Zsp0]
+
+insert polyhedron=epi replace.materials= { LowK Oxide } \
+       new.material=SiSDP new.region=sEpi_p
+
+PolyHedronClear
+
+if { $debug } { WriteBND }
+
+#---------------------------------------------------------------------#
+# GATE METAL FORMATION
+#---------------------------------------------------------------------#
+# Create one common tungsten gate or separate nFET/pFET gate regions.
+if { $splitGate } {
+
+    polyhedron name=gm brick= [list $Hild $Ylo $P0 $Xmid $Yhi $P1]
+
+    insert polyhedron=gm replace.materials= { Silicon } \
+           new.material=Tungsten new.region=GateMetal_n
+
+    PolyHedronClear
+
+    polyhedron name=gm brick= [list $Xmid $Ylo $P0 $Xmax $Yhi $P1]
+
+    insert polyhedron=gm replace.materials= { Silicon } \
+           new.material=Tungsten new.region=GateMetal_p
+
+    PolyHedronClear
+
+} else {
+
+    set tx0 $Hild
+    set tx1 $Xmax
+
+    polyhedron name=gm brick= [list $tx0 $Ylo $P0 $tx1 $Yhi $P1]
+
+    insert polyhedron=gm replace.materials= { Silicon } \
+           new.material=Tungsten new.region=GateMetal
+
+    PolyHedronClear
+}
+
+if { $debug } { WriteBND }
+
+#---------------------------------------------------------------------#
+# SOURCE/DRAIN CONTACT METAL: BOTTOM nFET
+#---------------------------------------------------------------------#
+# Form tungsten source and drain contacts for the bottom nFET.
+set tx0 $Hild
+set tx1 $Hepi
+
+polyhedron name=cont brick= [list $tx0 $Ylo $Zcont1 $tx1 $Yhi $Zhi]
+
+insert polyhedron=cont replace.materials= { LowK } \
+       new.material=Tungsten new.region=dMetal_n
+
+PolyHedronClear
+
+polyhedron name=cont brick= [list $tx0 $Ylo $Zlo $tx1 $Yhi $Zcont0]
+
+insert polyhedron=cont replace.materials= { LowK } \
+       new.material=Tungsten new.region=sMetal_n
+
+PolyHedronClear
+
+#---------------------------------------------------------------------#
+# SOURCE/DRAIN CONTACT METAL: TOP pFET
+#---------------------------------------------------------------------#
+# Form tungsten source and drain contacts for the top pFET.
+set tx0 $XtEpiTop
+set tx1 $Xmax
+
+polyhedron name=cont brick= [list $tx0 $Ylo $Zcont1 $tx1 $Yhi $Zhi]
+
+insert polyhedron=cont replace.materials= { LowK } \
+       new.material=Tungsten new.region=dMetal_p
+
+PolyHedronClear
+
+polyhedron name=cont brick= [list $tx0 $Ylo $Zlo $tx1 $Yhi $Zcont0]
+
+insert polyhedron=cont replace.materials= { LowK } \
+       new.material=Tungsten new.region=sMetal_p
+
+PolyHedronClear
+
+if { $debug } { WriteBND }
+
+#---------------------------------------------------------------------#
+# ELECTRICAL CONTACT DEFINITIONS
+#---------------------------------------------------------------------#
+# Assign gate, source and drain regions to common or separate contacts.
+proc MakeCommon {cname r1 r2 alt2} {
+    contact name=$cname region=$r1 replace
+    if { [catch {contact name=$cname region=$r2 add} errAdd] } {
+        puts "WARNING: could not add $r2 to contact $cname ($errAdd); using separate contact $alt2"
+        contact name=$alt2 region=$r2 replace
+    }
+}
+
+if { $splitGate } {
+    if { $contactMode == 1 } {
+        MakeCommon gate GateMetal_n GateMetal_p gate_p
+    } else {
+        contact name=gate_n region=GateMetal_n replace
+        contact name=gate_p region=GateMetal_p replace
+    }
+} else {
+    contact name=gate region=GateMetal replace
+}
+
+if { $contactMode == 1 } {
+    MakeCommon source sMetal_n sMetal_p source_p
+    MakeCommon drain  dMetal_n dMetal_p drain_p
+} else {
+    contact name=source_n region=sMetal_n  replace
+    contact name=drain_n  region=dMetal_n  replace
+
+    contact name=source_p region=sMetal_p  replace
+    contact name=drain_p  region=dMetal_p  replace
+}
+
+#---------------------------------------------------------------------#
+# EXPORT STRUCTURAL MESH
+#---------------------------------------------------------------------#
+# Save the device geometry and mesh before assigning transistor doping.
+WriteBND
+
+struct tdr=n@node@_CFET_mesh_fps.tdr \
+       !Gas !interfaces !alt.maternames pdb !bnd !Adaptive
+
+#---------------------------------------------------------------------#
+# TRANSISTOR DOPING PROFILES
+#---------------------------------------------------------------------#
+# Define the erfc-shaped source/drain doping profile along the channel direction.
+set SDprof "(z>0)?((z>($P1dop))?$Nsd:($Nsd*erfc(-1*(z-($P1dop))/$Ldiff))):((z<($P0dop))?$Nsd:($Nsd*erfc((z-($P0dop))/$Ldiff)))"
+
+# Bottom nFET: p-type channel and n-type source/drain doping.
+select name=$DchN _ChMatN_ store z=$Nch
+
+select name=$DsdN _ChMatN_ store z=$SDprof
+
+select name=$DsdN _SdMatN_ store z=$Nsd
+
+# Top pFET: n-type channel and p-type source/drain doping.
+select name=$DchP _ChMatP_ store z=$Nch
+
+select name=$DsdP _ChMatP_ store z=$SDprof
+
+select name=$DsdP _SdMatP_ store z=$Nsd
+
+# Apply channel-stop doping to the silicon substrate.
+select name=$Dstop Silicon store z=$Nstop
+
+# Store the Ge mole fraction in the pFET channel and optionally its source/drain.
+set haveGe 1
+if { [catch {
+        select name=xMoleFraction _ChMatP_ store z=$xGe
+        if { $sdSiGe } {
+            select name=xMoleFraction _SdMatP_ store z=$xGe
+        }
+    } errGe] } {
+    set haveGe 0
+    puts "WARNING: could not store xMoleFraction ($errGe). Set Ge fraction in SDevice."
+}
+
+#---------------------------------------------------------------------#
+# DOPANT ACTIVATION
+#---------------------------------------------------------------------#
+# Apply the short activation anneal at the temperature specified by Tact.
+diffuse time=1.0e-6<s> temp=$Tact !stress.relax
+
+#---------------------------------------------------------------------#
+# NET ACTIVE DOPING AND FINAL STRUCTURE EXPORT
+#---------------------------------------------------------------------#
+# Store net active doping fields and include Ge composition when available.
+select name=DopingConcentration _ChMatP_ store z="NetActive"
+select name=DopingConcentration _SdMatP_ store z="NetActive"
+
+select name=DopingConcentration _ChMatN_ store z="NetActive"
+select name=DopingConcentration _SdMatN_ store z="NetActive"
+
+select name=DopingConcentration Silicon store z="NetActive"
+
+if { $haveGe } {
+    SetTDRList {DopingConcentration NetActive BActive PActive xMoleFraction} !Solutions
+} else {
+    SetTDRList {DopingConcentration NetActive BActive PActive} !Solutions
+}
+
+struct tdr=n@node@_CFET_fps.tdr \
+       !Gas !interfaces alt.maternames !pdb !bnd

@@ -1,0 +1,263 @@
+#setdep @node|genStackedNanoslab@
+
+
+#define _ENORMAL_ Enormal
+
+#define _VSTEP_ 0.1
+
+
+
+#define _NSTACKB_ 1
+#define _NSTACKT_ 1
+
+#define _TSIGE_  10.0e-3
+#define _TBOND_  25.0e-3
+#define _TGCAP_  3.0e-3
+#define _DHTOP_  0.0
+
+#define _TOPWRAP_ 1
+
+#define _MARGIN_ 0.002
+
+#define _XN0_ @<-0.5*H-0.002>@
+#define _XN1_ @<0.5*H+(_NSTACKB_-1)*(H+0.010)+0.002>@
+
+#if _TOPWRAP_ == 1
+#define _XP0_ @<0.5*H+(_NSTACKB_-1)*(H+0.010)+tox+thfo2+0.003+0.025+0.010-0.002>@
+#else
+#define _XP0_ @<0.5*H+(_NSTACKB_-1)*(H+0.010)+tox+thfo2+0.003+0.025-0.002>@
+#endif
+
+#define _XP1_ @<0.5*H+(_NSTACKB_-1)*(H+0.010)+tox+thfo2+0.003+0.025+_TOPWRAP_*0.010+(H+_DHTOP_)+(_NSTACKT_-1)*(H+_DHTOP_+0.010)+0.002>@
+
+#define _YW_ @<0.5*W+0.002>@
+#define _ZW_ @<0.5*L>@
+
+
+Electrode {
+
+#if "@commonGate@" == "1"
+    { Name="gate"   Voltage=0.0 Workfunction=@WF@ }
+#else
+    { Name="gate_n" Voltage=0.0 Workfunction=@WFN@ }
+    { Name="gate_p" Voltage=0.0 Workfunction=@WFP@ }
+#endif
+
+#if "@contactMode@" == "2"
+    { Name="source" Voltage=0.0 }
+    { Name="drain"  Voltage=0.0 }
+#elif "@contactMode@" == "1"
+    { Name="source_n" Voltage=0.0 }
+    { Name="source_p" Voltage=0.0 }
+    { Name="drain"    Voltage=0.0 }
+#else
+    { Name="source_n" Voltage=0.0 }
+    { Name="drain_n"  Voltage=0.0 }
+    { Name="source_p" Voltage=0.0 }
+    { Name="drain_p"  Voltage=0.0 }
+#endif
+
+}
+
+#if "@contactMode@" == "2"
+#define _GOAL_BIAS_ Goal { Name="drain" Voltage=@VDRAIN@ }
+#elif "@contactMode@" == "1"
+#if "@devSel@" == "p"
+#define _GOAL_BIAS_ Goal { Name="drain" Voltage=-@VDRAIN@ } Goal { Name="source_n" Voltage=-@VDRAIN@ }
+#else
+#define _GOAL_BIAS_ Goal { Name="drain" Voltage=@VDRAIN@ } Goal { Name="source_p" Voltage=@VDRAIN@ }
+#endif
+#else
+#define _GOAL_BIAS_ Goal { Name="drain_n" Voltage=@VDRAIN@ } Goal { Name="drain_p" Voltage=-@VDRAIN@ }
+#endif
+
+#if "@commonGate@" == "1"
+#define _GOAL_GNEG_  Goal { Name="gate" Voltage=-@VGATE@ }
+#define _GOAL_GPOS_  Goal { Name="gate" Voltage=@VGATE@ }
+#else
+#define _GOAL_GNEG_  Goal { Name="gate_n" Voltage=-@VGATE@ } Goal { Name="gate_p" Voltage=-@VGATE@ }
+#define _GOAL_GPOS_  Goal { Name="gate_n" Voltage=@VGATE@ }  Goal { Name="gate_p" Voltage=@VGATE@ }
+#endif
+
+#if "@quantum@" == "1"
+#define _EQNS_ Poisson Electron Hole eQuantumPotential hQuantumPotential
+#else
+#define _EQNS_ Poisson Electron Hole
+#endif
+
+File {
+    Grid      = "n@node|genStackedNanoslab@_CFET_fps.tdr"
+    Plot      = "n@node@_des.tdr"
+    Output    = "n@node@_des.log"
+    Current   = "n@node@_des.plt"
+    Parameter = "@parameter@"
+}
+
+Physics {
+    EffectiveIntrinsicDensity(
+        BandGapNarrowing(OldSlotboom)
+    )
+
+    Mobility(
+        PhuMob
+        _ENORMAL_
+    )
+
+    Recombination(
+        SRH(DopingDependence)
+        Auger
+    )
+
+#if "@quantum@" == "1"
+    eQuantumPotential
+    hQuantumPotential
+#endif
+}
+
+
+Plot {
+    eDensity
+    hDensity
+    eCurrent/Vector
+    hCurrent/Vector
+    TotalCurrent/Vector
+
+    Potential
+    ElectricField/Vector
+    Doping
+    SpaceCharge
+
+    eMobility
+    hMobility
+
+    ConductionBand
+    ValenceBand
+}
+
+CurrentPlot {
+    eDensity ( Integrate( Window[(_XN0_ -_YW_ -_ZW_)(_XN1_ _YW_ _ZW_)] ) )
+    hDensity ( Integrate( Window[(_XP0_ -_YW_ -_ZW_)(_XP1_ _YW_ _ZW_)] ) )
+}
+
+Math {
+    CoordinateSystem { UCS }
+
+    -CheckUndefinedModels
+    AutoOrientationSmoothingDistance = -1
+    GeometricDistances
+
+    Extrapolate
+    Derivative
+
+    Method = ILS
+
+
+    RhsMin = 1e-12
+    Iterations = 20
+
+    RelErrControl
+    Digits = 5
+    Notdamped = 0
+
+    ILSrc = "
+    set(1){
+        iterative(gmres(1000),
+            tolrel=1e-10,
+            tolunprec=1e-8,
+            tolabs=0,
+            maxit=400);
+        preconditioning(ilut(0.001,-1),left);
+        ordering(symmetric=nd,nonsymmetric=mpsilst);
+        options(compact=yes,linscale=0,
+            refineresidual=8,verbose=0);
+    };
+    "
+
+
+    wallclock
+    ExitOnFailure
+    Number_of_Threads = @Threads@
+
+    CurrentPlot(IntegrationUnit=cm)
+    CurrentWeighting
+}
+
+Solve {
+
+
+    Coupled(
+        Iterations=100
+        LineSearchDamping=1e-3
+    ) {
+        Poisson
+    }
+
+    Coupled(
+        Iterations=100
+        LineSearchDamping=1e-3
+    ) {
+        _EQNS_
+    }
+
+    Save(FilePrefix="n@node@_eq")
+
+
+    Quasistationary(
+        InitialStep=0.05
+        Increment=1.5
+        MinStep=1e-6
+        MaxStep=0.1
+
+        _GOAL_GNEG_
+
+    ) {
+        Coupled(
+            Iterations=50
+            LineSearchDamping=1
+        ) {
+            _EQNS_
+        }
+    }
+
+
+    Quasistationary(
+        InitialStep=0.05
+        Increment=1.5
+        MinStep=1e-6
+        MaxStep=0.1
+
+        _GOAL_BIAS_
+
+    ) {
+        Coupled(
+            Iterations=50
+            LineSearchDamping=1
+        ) {
+            _EQNS_
+        }
+    }
+
+    Save(FilePrefix="n@node@_Vd")
+
+
+    Quasistationary(
+        InitialStep=1e-2
+        Increment=1.3
+        MinStep=1e-6
+        MaxStep=_VSTEP_
+
+        _GOAL_GPOS_
+
+    ) {
+        Plugin(
+            Iterations=10
+            Digits=3
+        ) {
+            Poisson
+            Electron
+            Hole
+        }
+    }
+
+    Save(FilePrefix="n@node@_VgPos")
+}
